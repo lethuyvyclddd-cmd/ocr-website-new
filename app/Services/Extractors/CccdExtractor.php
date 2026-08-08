@@ -14,10 +14,28 @@ class CccdExtractor extends BaseExtractor
 
         $fullName = $this->afterLabel($text, ['Họ và tên', 'Ho va ten', 'Full name']);
         if (! $fullName) {
+            $excludeKeywords = [
+                'cong hoa', 'socialist', 'can cuoc', 'viet nam', 'chu nghia',
+                'doc lap', 'tu do', 'hanh phuc', 'independence', 'freedom',
+                'happiness', 'republic', 'citizen', 'identity', 'card',
+                'fullname', 'full name', 'date of birth', 'place of',
+                'nationality', 'quoc tich', 'so /', 'so :',
+            ];
+
             foreach (explode("\n", $text) as $line) {
                 $line = trim($line);
-                if (mb_strlen($line) >= 6 && $line === mb_strtoupper($line) && ! preg_match('/\d/', $line)
-                    && ! preg_match('/CỘNG HÒA|SOCIALIST|CĂN CƯỚC|VIET NAM/iu', $line)) {
+                $normLine = $this->normalize($line);
+
+                $isExcluded = false;
+                foreach ($excludeKeywords as $keyword) {
+                    if (str_contains($normLine, $keyword)) {
+                        $isExcluded = true;
+                        break;
+                    }
+                }
+
+                if (mb_strlen($line) >= 6 && $line === mb_strtoupper($line, 'UTF-8')
+                    && ! preg_match('/\d/', $line) && ! $isExcluded) {
                     $fullName = $line;
                     break;
                 }
