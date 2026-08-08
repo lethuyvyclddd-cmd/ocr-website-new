@@ -1,0 +1,368 @@
+/* ===== Bang mau chu dao - Xanh navy & trang, phong cach website truong dai hoc ===== */
+:root {
+    --navy: #0b3d62;
+    --navy-deep: #082c47;
+    --navy-light: #e8f0f7;
+    --accent: #c9a227;       /* vang dong - mau truyen thong cua nhieu truong */
+    --accent-deep: #a8841c;
+    --bg: #f5f7fa;
+    --white: #ffffff;
+    --ink: #1f2d3d;
+    --ink-soft: #5e6b7a;
+    --line: #d9e2ec;
+    --success: #1e7a4c;
+    --success-bg: #e6f4ec;
+    --danger: #c0392b;
+    --danger-bg: #fbeaea;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: 'Segoe UI', Arial, 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    margin: 0;
+    min-height: 100vh;
+}
+
+/* ===== Navbar ===== */
+.ocr-navbar {
+    background: var(--navy);
+    border-bottom: 3px solid var(--accent);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.ocr-navbar .brand {
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--white);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 0.2px;
+}
+
+.ocr-navbar .brand .accent { color: var(--accent); }
+
+.ocr-navbar .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.ocr-navbar .nav-links a {
+    font-weight: 600;
+    font-size: 0.86rem;
+    color: #cfe0ef;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.ocr-navbar .nav-links a:hover {
+    background: rgba(255,255,255,0.08);
+    color: var(--white);
+}
+
+.ocr-navbar .nav-links a.active {
+    background: var(--accent);
+    color: var(--navy-deep);
+}
+
+.ocr-navbar .user-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.85rem;
+    color: #cfe0ef;
+    font-weight: 500;
+}
+
+.ocr-navbar .role-chip {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ocr-navbar .role-chip.admin { background: var(--accent); color: var(--navy-deep); }
+.ocr-navbar .role-chip.user { background: rgba(255,255,255,0.12); color: var(--white); }
+
+.ocr-navbar .logout-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #cfe0ef;
+    cursor: pointer;
+}
+
+.ocr-navbar .logout-btn:hover {
+    background: rgba(255,255,255,0.1);
+    color: var(--white);
+}
+
+.ocr-navbar a[style] { color: #cfe0ef !important; }
+
+/* ===== Layout chung ===== */
+.container { position: relative; }
+
+.eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--navy-light);
+    border: 1px solid var(--line);
+    color: var(--navy);
+    font-weight: 700;
+    font-size: 0.74rem;
+    letter-spacing: 0.3px;
+    padding: 5px 14px;
+    border-radius: 3px;
+    margin-bottom: 14px;
+    text-transform: uppercase;
+}
+
+h1, h2, h4 {
+    color: var(--navy);
+    font-weight: 700;
+}
+
+h1.text-primary, h2 { color: var(--navy) !important; }
+.accent { color: var(--accent-deep); }
+.subtext { color: var(--ink-soft); margin-top: 8px; }
+
+hr { border: none; height: 1px; background: var(--line); margin: 32px 0; }
+
+/* ===== Card chung (stat card, info card, auth card) ===== */
+.card.shadow, .info-card, .table-wrap {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 6px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+}
+
+.card.shadow:hover { transform: none; border-color: var(--line); box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important; }
+
+.card-body .stat-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    background: var(--navy-light);
+    font-size: 1.3rem;
+    margin-bottom: 12px;
+}
+
+.card-body h1 { color: var(--navy); font-size: 2.6rem; font-weight: 700; }
+.card-body h5 { color: var(--ink-soft); font-weight: 600; font-size: 0.92rem; }
+
+/* ===== Buttons ===== */
+.btn {
+    font-weight: 600;
+    border: none !important;
+    border-radius: 4px !important;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn:hover { transform: none; filter: none; }
+.btn:active { transform: none; }
+
+.btn-primary { background: var(--navy) !important; color: var(--white) !important; }
+.btn-primary:hover { background: var(--navy-deep) !important; box-shadow: none !important; }
+
+.btn-success { background: var(--success) !important; color: var(--white) !important; }
+.btn-success:hover { background: #15613c !important; box-shadow: none !important; }
+
+.btn-info { background: #2e6da4 !important; color: var(--white) !important; }
+.btn-info:hover { background: #245685 !important; box-shadow: none !important; }
+
+.btn-danger { background: var(--danger) !important; color: var(--white) !important; }
+.btn-danger:hover { background: #9c2e22 !important; box-shadow: none !important; }
+
+.btn-warning { background: var(--accent) !important; color: var(--navy-deep) !important; }
+.btn-warning:hover { background: var(--accent-deep) !important; box-shadow: none !important; }
+
+.btn-secondary { background: #6b7785 !important; color: var(--white) !important; }
+.btn-secondary:hover { background: #586270 !important; box-shadow: none !important; }
+
+.btn span.emoji { display: none; } /* an emoji de giu phong cach nghiem tuc */
+
+/* ===== Table ===== */
+.table-wrap { padding: 0; overflow: hidden; }
+
+table.table { margin-bottom: 0; }
+
+thead tr th {
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: var(--navy);
+    background: var(--navy-light);
+    border: none !important;
+    padding: 13px 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+tbody tr td {
+    font-weight: 400;
+    font-size: 0.92rem;
+    padding: 13px 16px;
+    border: none !important;
+    border-bottom: 1px solid var(--line) !important;
+    vertical-align: middle;
+}
+
+tbody tr:last-child td { border-bottom: none !important; }
+tbody tr:hover { background: var(--navy-light); }
+
+.badge-role, .badge-gender {
+    padding: 3px 10px;
+    border-radius: 3px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.badge-admin { background: var(--accent); color: var(--navy-deep); }
+.badge-user { background: var(--navy-light); color: var(--navy); }
+
+/* ===== Form input ===== */
+.form-control, select.form-select {
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--white);
+    padding: 9px 14px;
+    color: var(--ink);
+}
+
+.form-control:focus {
+    border-color: var(--navy);
+    box-shadow: 0 0 0 3px rgba(11,61,98,0.12);
+}
+
+/* ===== Empty state ===== */
+.empty-state { text-align: center; padding: 50px 20px; color: var(--ink-soft); }
+.empty-state .emoji { display: none; }
+
+/* ===== Pagination ===== */
+.pagination .page-link {
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    font-weight: 600;
+    border-radius: 4px !important;
+    margin: 0 2px;
+}
+.pagination .page-item.active .page-link { background: var(--navy); border-color: var(--navy); color: var(--white); }
+.pagination .page-link:hover { background: var(--navy-light); color: var(--navy); }
+
+/* ===== Alert ===== */
+.alert-success { background: var(--success-bg); border: 1px solid #b8dcc5; color: var(--success); border-radius: 4px; }
+.alert-danger { background: var(--danger-bg); border: 1px solid #ecbcbc; color: var(--danger); border-radius: 4px; }
+
+/* ===== Auth pages (login/register) ===== */
+.blob { display: none !important; } /* bo het hinh tron trang tri */
+
+.auth-card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 420px;
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-top: 4px solid var(--navy);
+    border-radius: 6px;
+    padding: 40px 36px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    margin: 60px auto;
+}
+
+.auth-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--navy-light);
+    border: 1px solid var(--line);
+    color: var(--navy);
+    font-weight: 700;
+    font-size: 0.72rem;
+    letter-spacing: 0.3px;
+    padding: 5px 14px;
+    border-radius: 3px;
+    margin-bottom: 18px;
+    text-transform: uppercase;
+}
+
+.auth-title { font-size: 1.4rem; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.auth-title .accent { color: var(--accent-deep); }
+.auth-subtext { color: var(--ink-soft); font-size: 0.9rem; margin-bottom: 26px; }
+
+label { font-weight: 600; font-size: 0.84rem; color: var(--ink); margin-bottom: 6px; display: block; }
+
+input[type=text], input[type=email], input[type=password] {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--white);
+    padding: 11px 14px;
+    color: var(--ink);
+    margin-bottom: 18px;
+    font-size: 0.94rem;
+}
+
+input:focus { outline: none; border-color: var(--navy); box-shadow: 0 0 0 3px rgba(11,61,98,0.12); }
+
+.btn-auth {
+    width: 100%;
+    font-weight: 700;
+    font-size: 0.98rem;
+    border: none;
+    border-radius: 4px;
+    color: var(--white);
+    padding: 12px;
+    cursor: pointer;
+    background: var(--navy);
+}
+
+.btn-auth:hover { background: var(--navy-deep); }
+
+.auth-links { text-align: center; margin-top: 20px; font-size: 0.86rem; color: var(--ink-soft); }
+.auth-links a { color: var(--navy); font-weight: 700; text-decoration: none; }
+.auth-links a:hover { text-decoration: underline; }
+
+.error-box {
+    background: var(--danger-bg);
+    border: 1px solid #ecbcbc;
+    color: var(--danger);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+    font-size: 0.85rem;
+}
+.error-box ul { margin: 0; padding-left: 18px; }
+
+.status-box {
+    background: var(--success-bg);
+    border: 1px solid #b8dcc5;
+    color: var(--success);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
