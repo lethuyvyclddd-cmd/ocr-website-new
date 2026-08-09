@@ -55,6 +55,22 @@ async def run_ocr(image: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Ảnh không hợp lệ: {exc}")
 
     img_array = preprocess(pil_image)
+
+    # Bước 0: Thử OCR nhanh ở 4 góc xoay (0°, 90°, 180°, 270°), chọn góc đọc được
+    # NHIỀU CHỮ NHẤT -> tự động xoay ảnh về đúng chiều trước khi đọc kỹ.
+    best_angle = 0
+    best_count = -1
+    for angle in [0, 90, 180, 270]:
+        rotated = np.array(Image.fromarray(img_array).rotate(-angle, expand=True))
+        quick_result = detector.ocr(rotated, det=True, rec=False, cls=False)
+        boxes_found = len(quick_result[0]) if quick_result and quick_result[0] else 0
+        if boxes_found > best_count:
+            best_count = boxes_found
+            best_angle = angle
+
+    if best_angle != 0:
+        img_array = np.array(Image.fromarray(img_array).rotate(-best_angle, expand=True))
+
     full_image = Image.fromarray(img_array)
 
     # Bước 1: PaddleOCR chỉ tìm vị trí (không đọc chữ) -> det=True, rec=False

@@ -79,6 +79,9 @@ class ApplicantController extends Controller
 
     public function uploadDocument(Request $request, Applicant $applicant): RedirectResponse
     {
+        set_time_limit(300);
+        ini_set('max_execution_time', '300');
+
         $request->validate([
             'image' => 'required|file|mimes:jpg,jpeg,png,bmp,webp,pdf,docx|max:20480',
             'document_type' => 'required|in:' . implode(',', array_keys(ApplicantDocument::TYPES)),
@@ -106,12 +109,21 @@ class ApplicantController extends Controller
                 'uploaded_by' => $request->user()->id,
             ]);
 
+            // Các field mà Phiếu ĐKXT được ƯU TIÊN GHI ĐÈ, kể cả khi đã có dữ liệu từ CCCD/Bằng
+            // (vì địa chỉ trên phiếu đăng ký mới hơn, sau khi Việt Nam sáp nhập tỉnh thì
+            // địa chỉ in sẵn trên CCCD cũ không còn đúng nữa)
+            $alwaysOverrideFields = ['permanent_address', 'ward_name', 'province_name'];
+
             $updates = [];
             foreach ($parsedData as $column => $value) {
                 if (empty($value)) {
                     continue;
                 }
-                if (empty($applicant->{$column})) {
+
+                $shouldOverride = $request->document_type === 'admission_form'
+                    && in_array($column, $alwaysOverrideFields, true);
+
+                if ($shouldOverride || empty($applicant->{$column})) {
                     $updates[$column] = $value;
                 }
             }
@@ -126,9 +138,37 @@ class ApplicantController extends Controller
     public function update(Request $request, Applicant $applicant): RedirectResponse
     {
         $data = $request->only(array_keys(Applicant::EXPORT_COLUMNS));
+
+        $dateColumns = ['birth_date', 'gb_date', 'entry_date'];
+        foreach ($dateColumns as $column) {
+            if (! empty($data[$column])) {
+                $data[$column] = $this->parseDateInput($data[$column]);
+            }
+        }
+
         $applicant->update($data);
 
         return back()->with('success', 'Đã lưu thông tin hồ sơ.');
+    }
+
+    protected function parseDateInput(?string $value): ?string
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        // Đã đúng định dạng chuẩn Y-m-d rồi -> giữ nguyên
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return $value;
+        }
+
+        // Định dạng d/m/Y (hiển thị trên form) -> chuyển về Y-m-d
+        if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $value, $m)) {
+            return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+        }
+
+        // Không nhận dạng được -> bỏ qua, không lưu để tránh lỗi
+        return null;
     }
 
     public function destroy(Applicant $applicant): RedirectResponse

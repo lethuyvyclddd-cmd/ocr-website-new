@@ -26,8 +26,7 @@ class ApplicantDocument extends Model
 
     public const TYPES = [
         'cccd_front' => 'CCCD - Mặt trước',
-        'cccd_back' => 'CCCD - Mặt sau',
-        'diploma_transcript' => 'Bằng tốt nghiệp / Bảng điểm ĐH',
+        'diploma_transcript' => 'Bằng tốt nghiệp',
         'admission_form' => 'Phiếu đăng ký xét tuyển',
     ];
 }

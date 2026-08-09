@@ -20,7 +20,7 @@ class OcrService
             throw new RuntimeException("Không tìm thấy file ảnh: {$imagePath}");
         }
 
-        $response = Http::timeout(90)
+        $response = Http::timeout(280)
             ->attach('image', file_get_contents($imagePath), basename($imagePath))
             ->post($this->endpoint . '/ocr');
 
@@ -34,7 +34,7 @@ class OcrService
     }
     public function readPdfScanned(string $pdfPath): string
     {
-        $response = Http::timeout(180)
+        $response = Http::timeout(280)
             ->attach('file', file_get_contents($pdfPath), basename($pdfPath))
             ->post($this->endpoint . '/ocr-pdf');
 
