@@ -2,23 +2,61 @@
 
 namespace App\Services\Extractors;
 
+use App\Helpers\DictionaryMatcher;
+use App\Dictionaries\Majors;
+use App\Dictionaries\Universities;
+
 class DiplomaExtractor extends BaseExtractor
 {
+    /**
+     * Đối chiếu với từ điển (tên trường / tên ngành) để sửa lỗi OCR nhẹ.
+     * Nếu không tìm thấy mục nào đủ gần trong từ điển, DictionaryMatcher sẽ trả về
+     * bản đã chuẩn hoá (mất dấu, viết thường) — trường hợp đó ta giữ lại nguyên văn
+     * gốc (có dấu) thay vì bản đã bị chuẩn hoá, để không làm mất thông tin thật.
+     */
+    private function matchDictionary(string $raw, array $dictionary): string
+    {
+        $clean = trim(preg_replace('/\s+/', ' ', $raw));
+        $matched = DictionaryMatcher::match($clean, $dictionary);
+
+        return $matched === $this->normalize($clean) ? $clean : $matched;
+    }
+
     public function extract(string $text): array
     {
         $result = [];
 
-        if ($university = $this->afterLabel($text, ['Trường', 'Trường Đại học', 'Trường đại học'], 150)) {
-            $result['university_name'] = $university;
+        // ===== Họ tên (nhãn "Cho:" trên bằng, dạng "Ông/Bà <Họ Tên>") =====
+        if (preg_match('/\bCho\s*[:\.]{1}\s*([^\n]+?)(?:[ \t]{2,}|\n|$)/iu', $text, $m)) {
+            $rawName = trim($m[1]);
+
+            if (preg_match('/^(Ông|Bà)\s+(.+)$/iu', $rawName, $mm)) {
+                $result['gender'] = mb_strtolower($mm[1], 'UTF-8') === 'ông' ? 'Nam' : 'Nữ';
+                $rawName = trim($mm[2]);
+            }
+
+            if ($rawName !== '') {
+                $result = array_merge($result, $this->splitFullName($rawName));
+            }
         }
 
-        if (preg_match('/t[oố]t nghi[eệ]p.{0,20}(\d{4})/iu', $text, $m)) {
-            $result['university_graduation_year'] = $m[1];
+        // ===== Ngày sinh =====
+        if (preg_match('/Ng[àa]y\s*sinh[:\s]+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/iu', $text, $m)) {
+            $result['birth_date'] = $this->toDbDate($m[1]);
         }
 
-        if (preg_match('/(Xu[aấ]t s[aắ]c|Gi[oỏ]i|Kh[aá]|Trung b[iì]nh kh[aá]|Trung b[iì]nh)/iu', $text, $m)) {
-            $result['classification'] = $m[1];
+        // ===== Tên trường (bắt trọn cả cụm "Trường Đại học ...") =====
+        if (preg_match('/(Tr[ưu]ờng\s+(?:Đại\s*h[oọ]c|Cao\s*đ[ẳă]ng)[^\n]{2,80}?)(?:[ \t]{2,}|\n|$)/iu', $text, $m)) {
+            $result['university_name'] = $this->matchDictionary($m[1], Universities::all());
+        }
+
+        // ===== Hạng tốt nghiệp / Xếp loại =====
+        if (preg_match('/H[aạ]ng\s*t[oố]t\s*nghi[eệ]p[:\s]+(Xu[aấ]t\s*s[aắ]c|Gi[oỏ]i|Kh[aá]|Trung\s*b[iì]nh\s*kh[aá]|Trung\s*b[iì]nh)/iu', $text, $m)) {
+            $result['classification'] = trim($m[1]);
+        } elseif (preg_match('/(Xu[aấ]t\s*s[aắ]c|Gi[oỏ]i|Kh[aá]|Trung\s*b[iì]nh\s*kh[aá]|Trung\s*b[iì]nh)/iu', $text, $m)) {
+            $result['classification'] = trim($m[1]);
         } else {
+            // Fallback: một số mẫu bằng chỉ ghi mã viết tắt (TB/K/G/XS) nằm gần nhãn "Xếp loại"
             $lines = array_values(array_filter(array_map('trim', explode("\n", $text))));
             $labelIndex = null;
 
@@ -44,18 +82,59 @@ class DiplomaExtractor extends BaseExtractor
             }
         }
 
+        // ===== Hình thức / hệ đào tạo =====
         if ($training = $this->afterLabel($text, ['Hình thức đào tạo', 'Hệ đào tạo'], 40)) {
             $result['training_type'] = $training;
-        } elseif (preg_match('/(Ch[ií]nh quy|V[uừ]a l[aà]m v[uừ]a h[oọ]c|T[uừ] xa|Li[eê]n th[oô]ng)/iu', $text, $m)) {
+        } elseif (preg_match('/(Ch[ií]nh\s*quy|V[uừ]a\s*l[aà]m\s*v[uừ]a\s*h[oọ]c|T[uừ]\s*xa|Li[eê]n\s*th[oô]ng)/iu', $text, $m)) {
             $result['training_type'] = $m[1];
         }
 
-        if (preg_match('/S[oố]\s*hi[eệ]u[.:\s]+(\d+)/iu', $text, $m)) {
-            $result['diploma_number'] = $m[1];
+        // ===== Ngành / chuyên ngành đào tạo =====
+        if ($major = $this->afterLabelNormalized($text, ['Ngành đào tạo', 'Chuyên ngành', 'Ngành'], 80)) {
+            $result['major_name'] = DictionaryMatcher::match(trim($major), Majors::all());
+        } elseif (preg_match('/B[ẰĂă]NG\s+[^\n]{0,60}\n\s*([^\n]{4,120})\n/u', $text, $m)) {
+            // Dòng chữ IN HOA ngay sau dòng "BẰNG ..." thường là tên ngành.
+            // Nếu OCR gộp 2 cột Anh/Việt trên cùng 1 dòng (cách nhau khoảng trắng lớn),
+            // lấy đoạn CUỐI dòng (cột bên phải = tiếng Việt).
+            $segments = array_values(array_filter(array_map('trim', preg_split('/[ \t]{2,}/', $m[1]))));
+            $candidate = $segments ? trim(preg_replace('/\s+/', ' ', end($segments))) : '';
+
+            if ($candidate !== '' && mb_strtoupper($candidate, 'UTF-8') === $candidate
+                && ! preg_match('/CỘNG\s*HÒA|\bCHO\b|CẤP|TRƯỜNG|VIỆT\s*NAM/iu', $candidate)) {
+                $result['major_name'] = $this->matchDictionary($candidate, Majors::all());
+            }
         }
 
-        if (preg_match('/S[oố]\s*v[àa]o\s*s[oổ][^\d]{0,40}(\d{5,})/iu', $text, $m)) {
-            $result['diploma_registry_number'] = $m[1];
+        if (preg_match('/M[aã]\s*ng[aà]nh[:\s]+(\d{4,8})/iu', $text, $m)) {
+            $result['major_code'] = $m[1];
+        }
+
+        // ===== Điểm trung bình chung (nếu là bảng điểm kèm theo) =====
+        if (preg_match('/[ĐD]i[eể]m\s*trung\s*b[iì]nh\s*chung(?:\s*t[ií]ch\s*lu[ỹy])?(?:\s*to[aà]n\s*kh[oó]a)?[:\s]+(\d+[.,]\d+)/iu', $text, $m)) {
+            $result['average_score'] = str_replace(',', '.', $m[1]);
+        }
+
+        // ===== Số hiệu văn bằng =====
+        if (preg_match('/S[oố]\s*hi[eệ]u(?:\s*v[aă]n\s*b[aằ]ng)?[:\s]+([^\n]{3,20}?)(?:[ \t]{2,}|\n|$)/iu', $text, $m)) {
+            $result['diploma_number'] = trim($m[1]);
+        }
+
+        // ===== Số vào sổ gốc cấp văn bằng (khớp nhãn DÀI nhất trước để không bị cắt cụt) =====
+        if (preg_match('/S[oố]\s*v[aà]o\s*s[oổ](?:\s*g[oố]c)?(?:\s*c[aấ]p\s*v[aă]n\s*b[aằ]ng)?[:\s]+([^\n]{3,40}?)(?:[ \t]{2,}|\n|$)/iu', $text, $m)) {
+            $result['diploma_registry_number'] = trim($m[1]);
+        }
+
+        // ===== Năm tốt nghiệp =====
+        if (preg_match('/t[oố]t\s*nghi[eệ]p[^\n]{0,20}(\d{4})/iu', $text, $m)) {
+            // chỉ nhận nếu số 4 chữ số này thực sự là năm hợp lý (tránh bắt nhầm số hiệu/điểm)
+            if ($m[1] >= 1990 && $m[1] <= (int) date('Y') + 1) {
+                $result['university_graduation_year'] = $m[1];
+            }
+        }
+        if (empty($result['university_graduation_year'])
+            && preg_match('/ng[àa]y\s+\d{1,2}\s+th[áa]ng\s+\d{1,2}\s+n[ăa]m\s+(\d{4})/iu', $text, $m)) {
+            // Fallback: lấy năm từ ngày ký cấp bằng (thường trùng/ gần năm tốt nghiệp)
+            $result['university_graduation_year'] = $m[1];
         }
 
         return $result;

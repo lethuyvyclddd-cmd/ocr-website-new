@@ -1,6 +1,6 @@
 """
-Vietnamese OCR microservice - kết hợp PaddleOCR (tìm vị trí chữ)
-+ VietOCR (đọc chữ tiếng Việt, chính xác dấu tốt hơn).
+Vietnamese OCR microservice - dùng PaddleOCR 3.x (predict()) để vừa
+tìm vị trí chữ vừa đọc chữ trong một bước duy nhất.
 """
 
 import os
@@ -11,21 +11,20 @@ import io
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from PIL import Image, ImageOps
+import pymupdf as fitz  # PyMuPDF
 
 app = FastAPI(title="Vietnamese OCR Service")
 
 from paddleocr import PaddleOCR  # noqa: E402
-from vietocr.tool.config import Cfg  # noqa: E402
-from vietocr.tool.predictor import Predictor  # noqa: E402
 
-# PaddleOCR: chỉ dùng để TÌM VỊ TRÍ có chữ trong ảnh (detection)
-detector = PaddleOCR(use_angle_cls=True, lang="vi", show_log=False)
-
-# VietOCR: dùng để ĐỌC CHỮ trong từng vùng đã tìm được (recognition)
-vietocr_config = Cfg.load_config_from_name('vgg_transformer')
-vietocr_config['device'] = 'cpu'
-vietocr_config['predictor']['beamsearch'] = False
-recognizer = Predictor(vietocr_config)
+# PaddleOCR 3.x: use_angle_cls -> use_textline_orientation, .ocr() -> .predict()
+ocr_engine = PaddleOCR(
+    lang="vi",
+    use_textline_orientation=True,
+    use_doc_orientation_classify=False,
+    use_doc_unwarping=False,
+    enable_mkldnn=False,  # tránh lỗi PIR/oneDNN của PaddlePaddle 3.3.x trên CPU
+)
 
 
 def preprocess(image: Image.Image) -> np.ndarray:
@@ -40,6 +39,38 @@ def preprocess(image: Image.Image) -> np.ndarray:
     return np.array(image)
 
 
+def _get(res, key, default=None):
+    """Truy cap an toan ca dict lan object PaddleX (co __getitem__ nhung khong co .get)."""
+    try:
+        value = res[key]
+        return value if value is not None else default
+    except (KeyError, TypeError, IndexError):
+        return default
+
+
+def extract_lines(res) -> list[dict]:
+    """Chuyen 1 ket qua predict() thanh list dong text + box + confidence."""
+    texts = _get(res, "rec_texts", []) or []
+    scores = _get(res, "rec_scores", []) or []
+    polys = _get(res, "rec_polys")
+    if polys is None:
+        polys = _get(res, "dt_polys", []) or []
+
+    lines = []
+    for i, text in enumerate(texts):
+        if not text:
+            continue
+        confidence = float(scores[i]) if i < len(scores) else 0.0
+        if i < len(polys) and hasattr(polys[i], "tolist"):
+            box = polys[i].tolist()
+        elif i < len(polys):
+            box = polys[i]
+        else:
+            box = [[0, 0]]
+        lines.append({"text": text, "confidence": confidence, "box": box})
+    return lines
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -52,54 +83,46 @@ async def run_ocr(image: UploadFile = File(...)):
     try:
         pil_image = Image.open(io.BytesIO(contents))
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Ảnh không hợp lệ: {exc}")
+        raise HTTPException(status_code=400, detail=f"Anh khong hop le: {exc}")
 
     img_array = preprocess(pil_image)
 
-    # Bước 0: Thử OCR nhanh ở 4 góc xoay (0°, 90°, 180°, 270°), chọn góc đọc được
-    # NHIỀU CHỮ NHẤT -> tự động xoay ảnh về đúng chiều trước khi đọc kỹ.
-    best_angle = 0
-    best_count = -1
-    for angle in [0, 90, 180, 270]:
-        rotated = np.array(Image.fromarray(img_array).rotate(-angle, expand=True))
-        quick_result = detector.ocr(rotated, det=True, rec=False, cls=False)
-        boxes_found = len(quick_result[0]) if quick_result and quick_result[0] else 0
-        if boxes_found > best_count:
-            best_count = boxes_found
-            best_angle = angle
-
-    if best_angle != 0:
-        img_array = np.array(Image.fromarray(img_array).rotate(-best_angle, expand=True))
-
-    full_image = Image.fromarray(img_array)
-
-    # Bước 1: PaddleOCR chỉ tìm vị trí (không đọc chữ) -> det=True, rec=False
-    detection = detector.ocr(img_array, det=True, rec=False, cls=True)
-    boxes = detection[0] if detection else []
+    results = ocr_engine.predict(img_array)
 
     lines = []
-    for box in boxes or []:
-        xs = [p[0] for p in box]
-        ys = [p[1] for p in box]
-        x1, y1, x2, y2 = int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))
-
-        # Bỏ qua vùng quá nhỏ (nhiễu)
-        if x2 - x1 < 3 or y2 - y1 < 3:
-            continue
-
-        crop = full_image.crop((x1, y1, x2, y2))
-
-        # Bước 2: VietOCR đọc chữ trong vùng đã crop
-        try:
-            text = recognizer.predict(crop)
-        except Exception:
-            text = ""
-
-        if text.strip():
-            lines.append({"text": text, "confidence": 1.0, "box": box})
+    for res in results:
+        lines.extend(extract_lines(res))
 
     lines.sort(key=lambda l: (round(l["box"][0][1] / 10), l["box"][0][0]))
 
     raw_text = "\n".join(l["text"] for l in lines)
 
     return {"raw_text": raw_text, "lines": lines}
+
+
+@app.post("/ocr-pdf")
+async def run_ocr_pdf(file: UploadFile = File(...)):
+    contents = await file.read()
+
+    try:
+        doc = fitz.open(stream=contents, filetype="pdf")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"PDF khong hop le: {exc}")
+
+    all_pages_text = []
+
+    for page in doc:
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+        img_bytes = pix.tobytes("png")
+        pil_image = Image.open(io.BytesIO(img_bytes))
+        img_array = preprocess(pil_image)
+
+        results = ocr_engine.predict(img_array)
+
+        page_lines = []
+        for res in results:
+            page_lines.extend(l["text"] for l in extract_lines(res))
+
+        all_pages_text.append("\n".join(page_lines))
+
+    return {"raw_text": "\n\n".join(all_pages_text)}

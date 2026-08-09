@@ -19,8 +19,8 @@ class OcrService
         if (! file_exists($imagePath)) {
             throw new RuntimeException("Không tìm thấy file ảnh: {$imagePath}");
         }
-
-        $response = Http::timeout(280)
+        set_time_limit(300);
+        $response = Http::timeout(240)
             ->attach('image', file_get_contents($imagePath), basename($imagePath))
             ->post($this->endpoint . '/ocr');
 
@@ -32,9 +32,11 @@ class OcrService
 
         return $response->json();
     }
+
     public function readPdfScanned(string $pdfPath): string
     {
-        $response = Http::timeout(280)
+        set_time_limit(240);
+        $response = Http::timeout(180)
             ->attach('file', file_get_contents($pdfPath), basename($pdfPath))
             ->post($this->endpoint . '/ocr-pdf');
 
