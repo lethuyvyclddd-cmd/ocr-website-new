@@ -28,19 +28,44 @@ class FileTextExtractorService
 
         foreach ($phpWord->getSections() as $section) {
             foreach ($section->getElements() as $element) {
-                if (method_exists($element, 'getText')) {
-                    $text .= $element->getText() . "\n";
-                } elseif (method_exists($element, 'getElements')) {
-                    foreach ($element->getElements() as $child) {
-                        if (method_exists($child, 'getText')) {
-                            $text .= $child->getText() . "\n";
-                        }
-                    }
-                }
+                $text .= $this->extractElementText($element) . "\n";
             }
         }
 
         return $text;
+    }
+
+    /**
+     * Đọc chữ từ 1 phần tử Word bất kỳ, kể cả TextRun/lồng nhau
+     * (getText() có thể trả về chuỗi HOẶC mảng phần tử con tuỳ loại).
+     */
+    protected function extractElementText($element): string
+    {
+        if (method_exists($element, 'getText')) {
+            $value = $element->getText();
+
+            if (is_string($value)) {
+                return $value;
+            }
+
+            if (is_array($value)) {
+                $parts = [];
+                foreach ($value as $child) {
+                    $parts[] = $this->extractElementText($child);
+                }
+                return implode('', $parts);
+            }
+        }
+
+        if (method_exists($element, 'getElements')) {
+            $parts = [];
+            foreach ($element->getElements() as $child) {
+                $parts[] = $this->extractElementText($child);
+            }
+            return implode('', $parts);
+        }
+
+        return '';
     }
 
     protected function extractPdf(string $path): string

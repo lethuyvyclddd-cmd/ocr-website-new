@@ -574,21 +574,21 @@ body{
 
         </a>
 
-        <a href="{{ url('/ocr') }}"
-           class="{{ request()->is('ocr') ? 'active' : '' }}">
+        <a href="{{ route('applicants.create') }}"
+           class="{{ request()->routeIs('applicants.create') ? 'active' : '' }}">
 
-            <i class="bi bi-cloud-arrow-up-fill me-2"></i>
+            <i class="bi bi-file-earmark-plus-fill me-2"></i>
 
-            OCR Tài liệu
+            Hồ sơ mới
 
         </a>
 
-        <a href="{{ Route::has('documents.list') ? route('documents.list') : url('/documents') }}"
-           class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">
+        <a href="{{ route('applicants.index') }}"
+           class="{{ request()->routeIs('applicants.index') || request()->routeIs('applicants.workspace') ? 'active' : '' }}">
 
             <i class="bi bi-folder2-open me-2"></i>
 
-            Hồ sơ
+            Danh sách hồ sơ
 
         </a>
 

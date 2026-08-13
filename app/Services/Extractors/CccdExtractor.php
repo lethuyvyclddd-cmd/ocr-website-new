@@ -62,11 +62,8 @@ class CccdExtractor extends BaseExtractor
             $result['ethnic'] = $ethnic;
         }
 
-        $address = $this->findAddressAcrossLines($lines, 'noi thuong tru', 'place of residence');
-        if ($address) {
-            $result['permanent_address'] = $address;
-            $result = array_merge($result, $this->splitAddress($address));
-        }
+        // Không lấy địa chỉ từ CCCD nữa - dùng địa chỉ trên Phiếu ĐKXT (mới hơn,
+        // đúng sau khi Việt Nam sáp nhập tỉnh, còn địa chỉ in trên CCCD cũ không còn đúng).
 
         return $result;
     }
@@ -85,13 +82,16 @@ class CccdExtractor extends BaseExtractor
                 $afterPos = $pos + mb_strlen($enKeyword, 'UTF-8');
                 $origRemainder = trim(mb_substr($line, $afterPos, null, 'UTF-8'));
                 $origRemainder = preg_replace('/^[\s:\/|.,\-]+/u', '', $origRemainder);
-                if (mb_strlen(trim($origRemainder)) > 2) {
+                if (mb_strlen(trim($origRemainder)) > 2 && ! preg_match('/^\d+$/', trim($origRemainder))) {
                     return trim($origRemainder);
                 }
             }
 
             if (isset($lines[$i + 1])) {
-                return trim($lines[$i + 1]);
+                $nextLine = trim($lines[$i + 1]);
+                if (mb_strlen($nextLine) > 1) {
+                    return $nextLine;
+                }
             }
 
             return null;
@@ -100,10 +100,6 @@ class CccdExtractor extends BaseExtractor
         return null;
     }
 
-    /**
-     * Giống findValueNearLabel, nhưng dùng cho địa chỉ có thể bị NGẮT LÀM NHIỀU DÒNG,
-     * kể cả khi dòng "Có giá trị đến / Date of expiry" chen giữa các dòng địa chỉ.
-     */
     protected function findAddressAcrossLines(array $lines, string $vnKeyword, string $enKeyword): ?string
     {
         foreach ($lines as $i => $line) {

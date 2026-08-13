@@ -7,10 +7,7 @@ class AdmissionFormExtractor extends BaseExtractor
     public function extract(string $text): array
     {
         $result = [];
-
-        if (preg_match('/đào tạo từ xa/iu', $text)) {
-            $result['training_type'] = 'Đào tạo từ xa';
-        }
+        
         if (preg_match('/từ xa năm[:\s]+(\d{4})/iu', $text, $m)) {
             $result['admission_year'] = $m[1];
         }

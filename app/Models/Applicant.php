@@ -98,4 +98,24 @@ class Applicant extends Model
         'diploma_number' => 'Số hiệu bằng TN',
         'diploma_registry_number' => 'Số vào sổ bằng TN',
     ];
+    protected function provinceName(): \Illuminate\Database\Eloquent\Casts\Attribute
+    {
+        return \Illuminate\Database\Eloquent\Casts\Attribute::make(
+            set: fn ($value) => \App\Services\ProvinceMergeMapper::toNewName($value),
+        );
+    }
+
+    protected function highschoolProvinceName(): \Illuminate\Database\Eloquent\Casts\Attribute
+    {
+        return \Illuminate\Database\Eloquent\Casts\Attribute::make(
+            set: fn ($value) => \App\Services\ProvinceMergeMapper::toNewName($value),
+        );
+    }
+
+    protected function universityProvinceName(): \Illuminate\Database\Eloquent\Casts\Attribute
+    {
+        return \Illuminate\Database\Eloquent\Casts\Attribute::make(
+            set: fn ($value) => \App\Services\ProvinceMergeMapper::toNewName($value),
+        );
+    }
 }

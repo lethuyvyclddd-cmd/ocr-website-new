@@ -59,8 +59,26 @@
             @csrf
             @method('PUT')
 
+            @php
+                // CHỈ hiện đúng các trường được yêu cầu, mọi trường khác ẩn khỏi form
+                // (vẫn còn cột đó khi xuất Excel, chỉ để trống nếu không có dữ liệu).
+                $visibleColumns = [
+                    'missing_documents', 'last_name', 'first_name', 'gender', 'birth_date',
+                    'id_number', 'place_of_birth', 'ethnic', 'ward_name', 'province_name',
+                    'highschool_province_name', 'highschool_name', 'highschool_graduation_year',
+                    'highschool_academic_rank', 'highschool_conduct_rank',
+                    'university_province_name', 'university_name', 'university_graduation_year',
+                    'permanent_address', 'phone_1', 'phone_2', 'major_name',
+                    'note_1', 'note_2', 'training_type',
+                    'diploma_number', 'diploma_registry_number',
+                ];
+
+                $hiddenColumns = array_diff(array_keys($exportColumns), $visibleColumns);
+            @endphp
+
             <div class="row">
                 @foreach($exportColumns as $column => $label)
+                    @continue(! in_array($column, $visibleColumns))
                     @php
                         $rawValue = $applicant->{$column};
                         if ($rawValue instanceof \Carbon\Carbon) {
@@ -74,6 +92,10 @@
                     </div>
                 @endforeach
             </div>
+
+            @foreach($hiddenColumns as $hidden)
+                <input type="hidden" name="{{ $hidden }}" value="{{ old($hidden, $applicant->{$hidden}) }}">
+            @endforeach
 
             <button type="submit" class="btn btn-primary">💾 Lưu thông tin</button>
         </form>
