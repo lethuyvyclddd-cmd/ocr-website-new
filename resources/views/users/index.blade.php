@@ -7,6 +7,55 @@
     <h1 class="page-title">Quản lý nhân viên</h1>
     <p class="page-subtitle">Danh sách tài khoản và phân quyền truy cập hệ thống.</p>
 
+    @if (session('success'))
+        <div class="alert alert-success">{{ session('success') }}</div>
+    @endif
+    @if (session('error'))
+        <div class="alert alert-danger">{{ session('error') }}</div>
+    @endif
+    @if ($errors->any())
+        <div class="alert alert-danger">
+            <ul class="mb-0">
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
+    <div class="card-box mb-4">
+        <h5 class="mb-3">Tạo tài khoản mới</h5>
+        <form action="{{ route('users.store') }}" method="POST" class="row g-2 align-items-end">
+            @csrf
+            <div class="col-md-3">
+                <label class="form-label">Họ tên</label>
+                <input type="text" name="name" class="form-control" value="{{ old('name') }}" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Email</label>
+                <input type="email" name="email" class="form-control" value="{{ old('email') }}" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Mật khẩu</label>
+                <input type="password" name="password" class="form-control" required>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Xác nhận mật khẩu</label>
+                <input type="password" name="password_confirmation" class="form-control" required>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Quyền</label>
+                <select name="role" class="form-select">
+                    <option value="user" selected>Nhân viên</option>
+                    <option value="admin">Quản lý</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100">Tạo</button>
+            </div>
+        </form>
+    </div>
+
     <div class="card-box">
         <div class="table-responsive">
             <table class="table table-bordered mb-0">

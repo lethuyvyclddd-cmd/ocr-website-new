@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rules;
 
 class UserManagementController extends Controller
 {
@@ -15,6 +17,30 @@ class UserManagementController extends Controller
         $users = User::orderBy('created_at', 'desc')->paginate(15);
 
         return view('users.index', compact('users'));
+    }
+
+    /**
+     * Admin tao tai khoan moi cho nhan vien.
+     * He thong khong cho phep nguoi dung tu dang ky,
+     * chi Admin moi co quyen cap tai khoan.
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:' . User::class],
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+            'role' => ['required', 'in:admin,user'],
+        ]);
+
+        User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+            'role' => $request->role,
+        ]);
+
+        return back()->with('success', 'Đã tạo tài khoản cho ' . $request->name);
     }
 
     /**

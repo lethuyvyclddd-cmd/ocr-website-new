@@ -33,9 +33,11 @@
 
         <div class="auth-links">
             @if (Route::has('password.request'))
-                <a href="{{ route('password.request') }}">Quên mật khẩu?</a><br><br>
+                <a href="{{ route('password.request') }}">Quên mật khẩu?</a>
             @endif
-            Chưa có tài khoản? <a href="{{ route('register') }}">Đăng ký ngay</a>
+            <p style="margin-top:10px; font-size:13px; color:#888;">
+                Chưa có tài khoản? Vui lòng liên hệ Quản trị viên để được cấp tài khoản.
+            </p>
         </div>
     </form>
 

@@ -42,6 +42,7 @@ Route::middleware('auth')->group(function () {
     // === Chức năng CHỈ ADMIN ===
     Route::middleware('admin')->group(function () {
         Route::get('/users', [UserManagementController::class, 'index'])->name('users.index');
+        Route::post('/users', [UserManagementController::class, 'store'])->name('users.store');
         Route::patch('/users/{id}/role', [UserManagementController::class, 'updateRole'])->name('users.updateRole');
         Route::delete('/users/{id}', [UserManagementController::class, 'destroy'])->name('users.destroy');
     });
