@@ -101,4 +101,30 @@ class ProvinceMergeMapper
 
         return str_replace($vietnamese, $ascii, $str);
     }
+    public static function extractProvinceFromText(?string $text): ?string
+    {
+        if (empty($text)) {
+            return $text;
+        }
+
+        $text = trim($text);
+
+        // Danh sách tên tỉnh/thành cũ đang có trong Provinces.php
+        $provinces = \App\Dictionaries\Provinces::all();
+
+        // Tìm tỉnh/thành xuất hiện trong chuỗi địa chỉ.
+        // Ưu tiên tên dài hơn để tránh match nhầm.
+        usort(
+            $provinces,
+            fn ($a, $b) => mb_strlen($b, 'UTF-8') <=> mb_strlen($a, 'UTF-8')
+        );
+
+        foreach ($provinces as $province) {
+            if (mb_stripos($text, $province, 0, 'UTF-8') !== false) {
+                return self::toNewName($province);
+            }
+        }
+
+        return null;
+    }
 }

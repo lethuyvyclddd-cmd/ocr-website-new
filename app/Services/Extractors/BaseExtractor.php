@@ -58,7 +58,12 @@ abstract class BaseExtractor
     }
     protected function stripDiacritics(string $str): string
     {
-        $vietnamese = ['à','á','ạ','ả','ã','â','ầ','ấ','ậ','ẩ','ẫ','ă','ằ','ắ','ặ','ẳ','ẵapp',
+        // FIX: phần tử cuối của nhóm â/ầ/ấ/ậ/ẩ/ẫ/ă/ằ/ắ/ặ/ẳ/ẵ trước đây bị gõ
+        // nhầm thành 'ẵapp' (thừa chữ "app" dính vào cuối). Hậu quả: str_replace
+        // tìm chuỗi "ẵapp" - gần như không bao giờ xuất hiện trong text thật -
+        // nên ký tự 'ẵ' đứng một mình KHÔNG BAO GIỜ được strip dấu, khiến
+        // normalize() bỏ sót các từ có ẵ (vd "vẵng", "ẵm"...). Sửa lại đúng 'ẵ'.
+        $vietnamese = ['à','á','ạ','ả','ã','â','ầ','ấ','ậ','ẩ','ẫ','ă','ằ','ắ','ặ','ẳ','ẵ',
             'è','é','ẹ','ẻ','ẽ','ê','ề','ế','ệ','ể','ễ','ì','í','ị','ỉ','ĩ',
             'ò','ó','ọ','ỏ','õ','ô','ồ','ố','ộ','ổ','ỗ','ơ','ờ','ớ','ợ','ở','ỡ',
             'ù','ú','ụ','ủ','ũ','ư','ừ','ứ','ự','ử','ữ','ỳ','ý','ỵ','ỷ','ỹ','đ',

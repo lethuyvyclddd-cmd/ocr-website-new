@@ -99,9 +99,24 @@ class ApplicantController extends Controller
         $extractor = ExtractorFactory::make($request->document_type);
         $parsedData = $extractor->extract($rawText);
 
-        DB::transaction(function () use ($applicant, $request, $fileName, $rawText, $parsedData) {
+        // Tìm hồ sơ KHÁC đã tồn tại trùng với người trong tài liệu vừa OCR
+        // (theo CCCD, hoặc theo họ+tên+ngày sinh nếu tài liệu chưa đọc được
+        // CCCD) — để GỘP tài liệu + dữ liệu vào ĐÚNG 1 hồ sơ duy nhất thay
+        // vì để 2 hồ sơ rời rạc tồn tại song song cho cùng 1 người (đây là
+        // nguyên nhân trực tiếp gây ra tình trạng "2 hồ sơ 1 người").
+        //
+        // AN TOÀN: chỉ coi là trùng để TỰ ĐỘNG gộp khi hồ sơ đang mở
+        // ($applicant) CHƯA có thông tin định danh xung đột (không có
+        // CCCD/họ tên khác với hồ sơ tìm thấy) — nếu có xung đột, rất có
+        // thể là 2 người trùng tên/OCR đọc sai, không tự gộp mà giữ hành vi
+        // cũ (cảnh báo, để admin tự xử lý) để tránh gộp nhầm dữ liệu.
+        $duplicateApplicant = $this->findDuplicateApplicant($applicant, $parsedData);
+
+        $targetApplicant = $duplicateApplicant ?? $applicant;
+
+        DB::transaction(function () use ($targetApplicant, $request, $fileName, $rawText, $parsedData) {
             ApplicantDocument::create([
-                'applicant_id' => $applicant->id,
+                'applicant_id' => $targetApplicant->id,
                 'document_type' => $request->document_type,
                 'image_path' => 'applicants/' . $fileName,
                 'raw_text' => $rawText,
@@ -114,25 +129,113 @@ class ApplicantController extends Controller
             // địa chỉ in sẵn trên CCCD cũ không còn đúng nữa)
             $alwaysOverrideFields = ['permanent_address', 'ward_name', 'province_name'];
 
+            // Họ tên/ngày sinh trên BẰNG TỐT NGHIỆP thường viết theo font
+            // chữ thảo (cursive), VietOCR đọc kém chính xác hơn nhiều so
+            // với CCCD (chữ in). Nếu bằng được upload TRƯỚC CCCD, các field
+            // này sẽ bị điền sai và mặc định KHÔNG được ghi đè nữa (vì logic
+            // gốc: chỉ điền khi đang trống). Cho phép CCCD luôn ghi đè lại
+            // các field này, kể cả khi đã có giá trị (có thể sai) từ bằng
+            // trước đó.
+            $cccdPriorityFields = ['last_name', 'first_name', 'birth_date'];
+
             $updates = [];
             foreach ($parsedData as $column => $value) {
                 if (empty($value)) {
                     continue;
                 }
 
-                $shouldOverride = $request->document_type === 'admission_form'
-                    && in_array($column, $alwaysOverrideFields, true);
+                $shouldOverride = ($request->document_type === 'admission_form'
+                        && in_array($column, $alwaysOverrideFields, true))
+                    || ($request->document_type === 'cccd_front'
+                        && in_array($column, $cccdPriorityFields, true));
 
-                if ($shouldOverride || empty($applicant->{$column})) {
+                if ($shouldOverride || empty($targetApplicant->{$column})) {
                     $updates[$column] = $value;
                 }
             }
             if (! empty($updates)) {
-                $applicant->update($updates);
+                $targetApplicant->update($updates);
             }
         });
 
+        if ($duplicateApplicant) {
+            $currentIsEmpty = empty($applicant->id_number)
+                && empty($applicant->last_name)
+                && empty($applicant->first_name)
+                && $applicant->documents()->count() === 0;
+
+            return redirect()
+                ->route('applicants.workspace', $duplicateApplicant->id)
+                ->with('warning',
+                    'Tài liệu này thuộc về người đã có hồ sơ #' . $duplicateApplicant->id
+                    . ' (' . ($duplicateApplicant->full_name ?: 'chưa có tên') . '). '
+                    . 'Đã tự động gộp dữ liệu + tài liệu vào hồ sơ đó thay vì tạo thêm ở hồ sơ #' . $applicant->id . '.'
+                    . ($currentIsEmpty
+                        ? ' Hồ sơ #' . $applicant->id . ' hiện đang trống, bạn có thể xoá nó.'
+                        : ' LƯU Ý: hồ sơ #' . $applicant->id . ' đã có dữ liệu khác, vui lòng kiểm tra lại.')
+                );
+        }
+
+        // Trường hợp CCCD đọc được trùng với hồ sơ khác NHƯNG không đủ an
+        // toàn để tự gộp (hồ sơ hiện tại đã có tên/CCCD xung đột) — giữ
+        // hành vi cảnh báo cũ, không tự động ghi đè id_number.
+        if (! empty($parsedData['id_number'])) {
+            $conflicting = Applicant::where('id_number', $parsedData['id_number'])
+                ->where('id', '!=', $applicant->id)
+                ->first();
+
+            if ($conflicting) {
+                return back()->with('warning',
+                    'Đã đọc và điền dữ liệu từ ' . ApplicantDocument::TYPES[$request->document_type]
+                    . '. LƯU Ý: số CCCD ' . $parsedData['id_number'] . ' đọc được đã tồn tại ở hồ sơ #'
+                    . $conflicting->id . ' (' . ($conflicting->full_name ?: 'chưa có tên') . ') nhưng hồ sơ hiện tại '
+                    . 'đã có thông tin khác nên KHÔNG tự động gộp. Vui lòng kiểm tra và xử lý thủ công.'
+                );
+            }
+        }
+
         return back()->with('success', 'Đã đọc và điền dữ liệu từ ' . ApplicantDocument::TYPES[$request->document_type]);
+    }
+
+    /**
+     * Tìm hồ sơ (applicant) KHÁC $current đã tồn tại, trùng với người vừa
+     * OCR được trong $parsedData — chỉ trả về khi đủ AN TOÀN để tự động
+     * gộp (xem giải thích ở uploadDocument()).
+     */
+    protected function findDuplicateApplicant(Applicant $current, array $parsedData): ?Applicant
+    {
+        $match = null;
+
+        if (! empty($parsedData['id_number'])) {
+            $match = Applicant::where('id_number', $parsedData['id_number'])
+                ->where('id', '!=', $current->id)
+                ->first();
+        }
+
+        if (
+            ! $match
+            && ! empty($parsedData['last_name'])
+            && ! empty($parsedData['first_name'])
+            && ! empty($parsedData['birth_date'])
+        ) {
+            $match = Applicant::query()
+                ->where('id', '!=', $current->id)
+                ->whereRaw('LOWER(TRIM(last_name)) = ?', [mb_strtolower(trim($parsedData['last_name']), 'UTF-8')])
+                ->whereRaw('LOWER(TRIM(first_name)) = ?', [mb_strtolower(trim($parsedData['first_name']), 'UTF-8')])
+                ->whereDate('birth_date', $parsedData['birth_date'])
+                ->first();
+        }
+
+        if (! $match) {
+            return null;
+        }
+
+        $currentHasConflictingIdentity =
+            (! empty($current->id_number) && $current->id_number !== $match->id_number)
+            || (! empty($current->last_name) && mb_strtolower(trim($current->last_name), 'UTF-8') !== mb_strtolower(trim($match->last_name ?? ''), 'UTF-8'))
+            || (! empty($current->first_name) && mb_strtolower(trim($current->first_name), 'UTF-8') !== mb_strtolower(trim($match->first_name ?? ''), 'UTF-8'));
+
+        return $currentHasConflictingIdentity ? null : $match;
     }
 
     public function update(Request $request, Applicant $applicant): RedirectResponse
