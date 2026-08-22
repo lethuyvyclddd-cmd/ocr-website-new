@@ -29,14 +29,18 @@ Route::middleware('auth')->group(function () {
         Route::get('/create', [ApplicantController::class, 'create'])->name('create');
         Route::post('/', [ApplicantController::class, 'store'])->name('store');
 
-        Route::get('/export', [ApplicantController::class, 'exportBatch'])->name('export.batch');
-
         Route::get('/{applicant}', [ApplicantController::class, 'workspace'])->name('workspace');
         Route::put('/{applicant}', [ApplicantController::class, 'update'])->name('update');
         Route::delete('/{applicant}', [ApplicantController::class, 'destroy'])->name('destroy');
 
         Route::post('/{applicant}/documents', [ApplicantController::class, 'uploadDocument'])->name('documents.upload');
-        Route::get('/{applicant}/export', [ApplicantController::class, 'exportOne'])->name('export.one');
+
+        // MỚI: gộp hồ sơ hiện tại ({applicant}) vào hồ sơ gốc ({target}) -
+        // dùng cho trường hợp phát hiện trùng CCCD nhưng KHÔNG đủ an toàn
+        // để tự động gộp (findDuplicateApplicant() từ chối), admin tự bấm
+        // nút "Gộp vào hồ sơ cũ" trên giao diện để ép gộp thủ công.
+        Route::post('/{applicant}/merge-into/{target}', [ApplicantController::class, 'mergeInto'])
+            ->name('merge');
     });
 
     // === Chức năng CHỈ ADMIN ===
@@ -45,6 +49,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/users', [UserManagementController::class, 'store'])->name('users.store');
         Route::patch('/users/{id}/role', [UserManagementController::class, 'updateRole'])->name('users.updateRole');
         Route::delete('/users/{id}', [UserManagementController::class, 'destroy'])->name('users.destroy');
+
+        // === Xuất file: CHỈ ADMIN được dùng ===
+        Route::get('/applicants/export', [ApplicantController::class, 'exportBatch'])->name('applicants.export.batch');
+        Route::get('/applicants/{applicant}/export', [ApplicantController::class, 'exportOne'])->name('applicants.export.one');
     });
 
 });

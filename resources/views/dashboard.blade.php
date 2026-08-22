@@ -32,23 +32,28 @@
     </div>
 
     <div class="row g-3 mb-4">
+
         <div class="col-md-4">
             <a href="{{ route('applicants.create') }}" class="btn btn-primary w-100 p-3">
                 + Hồ sơ mới
             </a>
         </div>
+
         <div class="col-md-4">
             <a href="{{ route('applicants.index') }}" class="btn btn-success w-100 p-3">
                 Danh sách hồ sơ
             </a>
         </div>
-        <div class="col-md-4">
-            <a href="{{ route('applicants.export.batch') }}" class="btn btn-warning w-100 p-3">
-                Xuất Excel toàn bộ
-            </a>
-        </div>
-    </div>
 
+        @if(auth()->user()->role === 'admin')
+            <div class="col-md-4">
+                <a href="{{ route('applicants.export.batch') }}" class="btn btn-warning w-100 p-3">
+                    Xuất Excel toàn bộ
+                </a>
+            </div>
+        @endif
+
+    </div>
     <div class="card-box">
         <h5 class="mb-3">🕒 Hồ sơ mới nhất</h5>
 

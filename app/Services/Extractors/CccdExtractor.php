@@ -53,10 +53,10 @@ class CccdExtractor extends BaseExtractor
             $result['gender'] = 'Nữ';
         }
 
-        $place = $this->findValueNearLabel($lines, 'que quan', 'place of origin');
-        if ($place) {
-            $result['place_of_birth'] = $place;
-        }
+        // Không lấy "Nơi sinh"/"Quê quán" từ CCCD nữa - dùng "Nơi sinh" trên
+        // Phiếu ĐKXT (mới hơn, đúng sau khi Việt Nam sáp nhập tỉnh, còn quê
+        // quán in trên CCCD cũ không còn khớp địa giới hành chính hiện tại).
+        // (Cùng lý do đã bỏ address ở dưới - xem comment cuối hàm.)
 
         if ($ethnic = $this->afterLabel($text, ['Dân tộc', 'Ethnicity'], 30)) {
             $result['ethnic'] = $ethnic;

@@ -178,19 +178,25 @@ class ApplicantController extends Controller
 
         // Trường hợp CCCD đọc được trùng với hồ sơ khác NHƯNG không đủ an
         // toàn để tự gộp (hồ sơ hiện tại đã có tên/CCCD xung đột) — giữ
-        // hành vi cảnh báo cũ, không tự động ghi đè id_number.
+        // hành vi cảnh báo, KHÔNG tự động ghi đè id_number, nhưng cho phép
+        // admin tự bấm nút "Gộp vào hồ sơ cũ" nếu xác nhận đúng là cùng 1
+        // người (ví dụ do OCR đọc sai tên ở 1 trong 2 hồ sơ).
         if (! empty($parsedData['id_number'])) {
             $conflicting = Applicant::where('id_number', $parsedData['id_number'])
                 ->where('id', '!=', $applicant->id)
                 ->first();
 
             if ($conflicting) {
-                return back()->with('warning',
-                    'Đã đọc và điền dữ liệu từ ' . ApplicantDocument::TYPES[$request->document_type]
-                    . '. LƯU Ý: số CCCD ' . $parsedData['id_number'] . ' đọc được đã tồn tại ở hồ sơ #'
-                    . $conflicting->id . ' (' . ($conflicting->full_name ?: 'chưa có tên') . ') nhưng hồ sơ hiện tại '
-                    . 'đã có thông tin khác nên KHÔNG tự động gộp. Vui lòng kiểm tra và xử lý thủ công.'
-                );
+                return back()
+                    ->with('duplicate_message',
+                        'Đã đọc và điền dữ liệu từ ' . ApplicantDocument::TYPES[$request->document_type]
+                        . '. LƯU Ý: số CCCD ' . $parsedData['id_number'] . ' đọc được đã tồn tại ở hồ sơ #'
+                        . $conflicting->id . ' (' . ($conflicting->full_name ?: 'chưa có tên') . ') nhưng hồ sơ '
+                        . 'hiện tại đã có thông tin khác nên KHÔNG tự động gộp. Nếu chắc chắn đây là cùng 1 '
+                        . 'người (do OCR đọc sai), bấm nút bên dưới để gộp thủ công.'
+                    )
+                    ->with('duplicate_target_id', $conflicting->id)
+                    ->with('duplicate_target_name', $conflicting->full_name ?: ('Hồ sơ #' . $conflicting->id));
             }
         }
 
@@ -279,6 +285,44 @@ class ApplicantController extends Controller
         $applicant->delete();
 
         return redirect()->route('applicants.index')->with('success', 'Đã xoá hồ sơ.');
+    }
+
+    /**
+     * Gộp $applicant (hồ sơ trùng, không đủ an toàn để tự động gộp lúc
+     * upload - vd có xung đột tên/CCCD do OCR đọc sai) vào $target (hồ sơ
+     * gốc), theo xác nhận thủ công của admin qua nút "Gộp vào hồ sơ cũ".
+     *
+     * - Chuyển toàn bộ ApplicantDocument từ $applicant sang $target.
+     * - Điền các field còn TRỐNG ở $target bằng dữ liệu từ $applicant
+     *   (không ghi đè field $target đã có giá trị).
+     * - Xoá $applicant sau khi gộp xong.
+     */
+    public function mergeInto(Applicant $applicant, Applicant $target): RedirectResponse
+    {
+        if ($applicant->id === $target->id) {
+            return back()->with('error', 'Không thể gộp hồ sơ vào chính nó.');
+        }
+
+        DB::transaction(function () use ($applicant, $target) {
+            ApplicantDocument::where('applicant_id', $applicant->id)
+                ->update(['applicant_id' => $target->id]);
+
+            $updates = [];
+            foreach (array_keys(Applicant::EXPORT_COLUMNS) as $column) {
+                if (! empty($applicant->{$column}) && empty($target->{$column})) {
+                    $updates[$column] = $applicant->{$column};
+                }
+            }
+
+            if (! empty($updates)) {
+                $target->update($updates);
+            }
+
+            $applicant->delete();
+        });
+
+        return redirect()->route('applicants.workspace', $target->id)
+            ->with('success', 'Đã gộp hồ sơ trùng vào hồ sơ này thành công.');
     }
 
     public function exportOne(Applicant $applicant)

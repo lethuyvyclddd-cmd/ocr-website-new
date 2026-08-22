@@ -19,11 +19,13 @@
         </div>
     </form>
 
-    <div class="mb-2">
-        <button type="button" id="exportBtn" class="btn btn-success btn-sm">
-            📊 Xuất Excel (đã chọn / tất cả nếu không chọn)
-        </button>
-    </div>
+    @if(auth()->user()->role === 'admin')
+        <div class="mb-2">
+            <button type="button" id="exportBtn" class="btn btn-success btn-sm">
+                📊 Xuất Excel (đã chọn / tất cả nếu không chọn)
+            </button>
+        </div>
+    @endif
 
     <div class="table-wrap">
         <table class="table table-bordered">

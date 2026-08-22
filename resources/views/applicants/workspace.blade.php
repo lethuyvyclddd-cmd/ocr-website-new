@@ -7,6 +7,24 @@
         <small class="text-muted" style="font-size:16px">— CCCD: {{ $applicant->id_number ?: '(chưa có)' }}</small>
     </h1>
 
+    @if(session('duplicate_target_id'))
+        <div class="alert alert-warning d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+            <div>
+                <i class="bi bi-exclamation-circle-fill me-2"></i>
+                {{ session('duplicate_message') }}
+            </div>
+            <form action="{{ route('applicants.merge', ['applicant' => $applicant->id, 'target' => session('duplicate_target_id')]) }}"
+                  method="POST"
+                  onsubmit="return confirm('Gộp hồ sơ này vào hồ sơ #{{ session('duplicate_target_id') }} ({{ session('duplicate_target_name') }})?\n\nHồ sơ HIỆN TẠI (#{{ $applicant->id }}) sẽ bị XOÁ sau khi gộp, toàn bộ tài liệu đã upload ở đây sẽ được CHUYỂN SANG hồ sơ #{{ session('duplicate_target_id') }}. Hành động này không thể hoàn tác.');">
+                @csrf
+                <button type="submit" class="btn btn-sm btn-warning text-nowrap">
+                    <i class="bi bi-arrow-left-right"></i>
+                    Gộp vào hồ sơ #{{ session('duplicate_target_id') }} ({{ session('duplicate_target_name') }})
+                </button>
+            </form>
+        </div>
+    @endif
+
     <div class="card-box mb-4">
         <h5 class="mb-3">📷 Upload giấy tờ</h5>
         <p class="text-muted">Chọn loại giấy tờ rồi upload ảnh — hệ thống sẽ OCR và tự điền vào form bên dưới.</p>
@@ -55,9 +73,12 @@
     <div class="card-box mb-4">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">📝 Thông tin hồ sơ (kiểm tra & chỉnh sửa nếu OCR đọc sai)</h5>
-            <a href="{{ route('applicants.export.one', $applicant->id) }}" class="btn btn-success btn-sm">
-                Xuất Excel hồ sơ này
-            </a>
+            {{-- CHỈ ADMIN mới được xuất Excel --}}
+            @if(auth()->user()->role === 'admin')
+                <a href="{{ route('applicants.export.one', $applicant->id) }}" class="btn btn-success btn-sm">
+                    Xuất Excel hồ sơ này
+                </a>
+            @endif
         </div>
 
         <form action="{{ route('applicants.update', $applicant->id) }}" method="POST">
