@@ -8,16 +8,16 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --sky:#D6EEFF;
-  --sky-mid:#B8DCFA;
-  --sky-deep:#7BBDE8;
-  --blue:#2B7CC4;
-  --blue-dark:#1A5490;
+  --sky:#EFF7FF;
+  --sky-mid:#DCEEFF;
+  --sky-deep:#A9D3F5;
+  --blue:#4A90D9;
+  --blue-dark:#2E6DA4;
   --white:#FFFFFF;
   --text:#1C2B3A;
   --muted:#5A7088;
-  --border:#C8DCEE;
-  --surface:#EEF6FF;
+  --border:#D9E9F8;
+  --surface:#F4F9FF;
 }
 body{font-family:'Inter',sans-serif;color:var(--text);background:var(--white);line-height:1.6}
 
@@ -34,12 +34,6 @@ nav{
   height:64px;
 }
 .logo{display:flex;align-items:center;gap:10px;text-decoration:none}
-.logo-badge{
-  width:36px;height:36px;border-radius:8px;
-  background:var(--blue);
-  display:flex;align-items:center;justify-content:center;
-  font-size:14px;font-weight:700;color:#fff;font-family:'Playfair Display',serif;
-}
 .logo-name{color:var(--blue-dark);font-size:14px;font-weight:600;letter-spacing:0.01em}
 .nav-links{display:flex;align-items:center;gap:4px}
 .nav-links a{
@@ -57,18 +51,11 @@ nav{
 
 .hero{
   background:var(--sky);
-  padding:110px 6% 90px;
+  padding:90px 6% 70px;
   text-align:center;
-  position:relative;overflow:hidden;
 }
-.hero-clouds{
-  position:absolute;inset:0;
-  background-image:
-    radial-gradient(ellipse 300px 120px at 10% 30%, rgba(255,255,255,0.55) 0%, transparent 70%),
-    radial-gradient(ellipse 400px 150px at 80% 20%, rgba(255,255,255,0.4) 0%, transparent 70%),
-    radial-gradient(ellipse 250px 100px at 55% 70%, rgba(255,255,255,0.3) 0%, transparent 70%);
-}
-.hero-inner{position:relative;z-index:2;max-width:660px;margin:0 auto}
+.hero-inner{max-width:660px;margin:0 auto}
+.hero-logo{margin-bottom:22px;display:flex;justify-content:center}
 .hero-tag{
   display:inline-block;
   background:#fff;color:var(--blue);
@@ -114,6 +101,21 @@ nav{
 .stat:last-child{border-right:none}
 .stat-n{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--blue-dark)}
 .stat-l{font-size:13px;color:var(--muted);margin-top:2px}
+
+.river-divider{display:block;width:100%;line-height:0}
+
+.about-row{
+  display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;margin-top:40px;
+}
+.about-visual{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:12px}
+.about-visual svg{width:100%;height:auto;display:block;border-radius:10px}
+.about-list{list-style:none;margin-top:18px}
+.about-list li{
+  display:flex;gap:10px;align-items:flex-start;color:var(--muted);
+  font-size:14px;padding:7px 0;
+}
+
+.news-illus{width:100%;height:160px;display:block}
 
 .section{padding:80px 6%}
 .section-inner{max-width:1100px;margin:0 auto}
@@ -179,6 +181,7 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
 
 @media(max-width:860px){
   .stats-inner,.programs-grid,.news-row,.footer-top{grid-template-columns:1fr 1fr}
+  .about-row{grid-template-columns:1fr;gap:28px}
 }
 @media(max-width:560px){
   .nav-links{display:none}
@@ -193,7 +196,7 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
 <nav>
   <div class="nav-inner">
     <a class="logo" href="/">
-      <div class="logo-badge">CL</div>
+      <x-university-logo :size="34" />
       <span class="logo-name">Đại học Cửu Long</span>
     </a>
     <div class="nav-links">
@@ -208,8 +211,8 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
 </nav>
 
 <section class="hero">
-  <div class="hero-clouds"></div>
   <div class="hero-inner">
+    <div class="hero-logo"><x-university-logo :size="72" /></div>
     <div class="hero-tag">Vĩnh Long · Đồng bằng sông Cửu Long</div>
     <h1>Nơi bầu trời<br>rộng mở cho tri thức</h1>
     <p>Đào tạo nhân lực chất lượng cao — chất lượng, sáng tạo, hội nhập.</p>
@@ -219,6 +222,10 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
     </div>
   </div>
 </section>
+
+<svg class="river-divider" viewBox="0 0 1200 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M0,20 C150,50 350,0 600,20 C850,40 1050,0 1200,20 L1200,60 L0,60 Z" fill="#ffffff"/>
+</svg>
 
 <div class="stats-bar">
   <div class="stats-inner">
@@ -240,6 +247,56 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
     </div>
   </div>
 </div>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="about-row">
+      <div>
+        <span class="sec-tag">Về trường</span>
+        <h2 class="sec-h">Trường Đại học Cửu Long</h2>
+        <p class="sec-sub">Tọa lạc bên dòng Cửu Long tại Vĩnh Long, trường đào tạo đa ngành với môi trường học tập gắn liền thực tiễn vùng Đồng bằng sông Cửu Long.</p>
+        <ul class="about-list">
+          <li>📍 Quốc lộ 1A, Phú Quới, Long Hồ, Vĩnh Long</li>
+          <li>🎓 Đào tạo đa ngành, đa lĩnh vực bậc đại học & sau đại học</li>
+          <li>🤝 Gắn kết doanh nghiệp — sinh viên thực tập, việc làm ngay sau tốt nghiệp</li>
+        </ul>
+      </div>
+      <div class="about-visual">
+        <svg viewBox="0 0 500 340" xmlns="http://www.w3.org/2000/svg">
+          <rect width="500" height="340" fill="#EFF7FF"/>
+          <circle cx="410" cy="70" r="34" fill="#FBEFC7"/>
+          <rect y="240" width="500" height="40" fill="#DCEEFF"/>
+          <rect y="272" width="500" height="68" fill="#A9D3F5"/>
+          <path d="M0,272 C60,262 120,282 180,272 C240,262 300,282 360,272 C420,262 460,272 500,268 L500,290 L0,290 Z" fill="#8FC7EC"/>
+          <g>
+            <rect x="70" y="260" width="12" height="26" fill="#3E7A3F"/>
+            <ellipse cx="76" cy="248" rx="26" ry="18" fill="#5CA860"/>
+            <ellipse cx="60" cy="238" rx="16" ry="12" fill="#6BB86E"/>
+            <ellipse cx="94" cy="238" rx="16" ry="12" fill="#6BB86E"/>
+          </g>
+          <g>
+            <rect x="410" y="258" width="11" height="28" fill="#3E7A3F"/>
+            <ellipse cx="415" cy="246" rx="24" ry="16" fill="#5CA860"/>
+            <ellipse cx="400" cy="238" rx="14" ry="10" fill="#6BB86E"/>
+            <ellipse cx="430" cy="238" rx="14" ry="10" fill="#6BB86E"/>
+          </g>
+          <rect x="140" y="150" width="220" height="100" fill="#FFFFFF" stroke="#B9D9F2" stroke-width="2"/>
+          <polygon points="130,150 250,95 370,150" fill="#4A90D9"/>
+          <rect x="235" y="105" width="30" height="45" fill="#2E6DA4"/>
+          <rect x="150" y="180" width="26" height="70" fill="#DCEEFF" stroke="#A9D3F5"/>
+          <rect x="185" y="180" width="26" height="70" fill="#DCEEFF" stroke="#A9D3F5"/>
+          <rect x="289" y="180" width="26" height="70" fill="#DCEEFF" stroke="#A9D3F5"/>
+          <rect x="324" y="180" width="26" height="70" fill="#DCEEFF" stroke="#A9D3F5"/>
+          <rect x="235" y="200" width="30" height="50" fill="#2E6DA4"/>
+          <rect x="140" y="245" width="220" height="7" fill="#B9D9F2"/>
+          <rect x="120" y="252" width="260" height="8" fill="#A9D3F5"/>
+          <rect x="248" y="70" width="4" height="35" fill="#2E6DA4"/>
+          <path d="M252,70 L280,78 L252,86 Z" fill="#E0685F"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section class="section">
   <div class="section-inner">
@@ -287,7 +344,16 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
     <h2 class="sec-h">Cập nhật mới nhất</h2>
     <div class="news-row">
       <a href="#" class="news-card">
-        <img src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?auto=format&fit=crop&w=600&q=80" alt="Tuyển sinh">
+        <svg class="news-illus" viewBox="0 0 400 160" xmlns="http://www.w3.org/2000/svg">
+          <rect width="400" height="160" fill="#DCEEFF"/>
+          <circle cx="200" cy="80" r="42" fill="#EFF7FF"/>
+          <rect x="150" y="70" width="100" height="34" rx="4" fill="#FFFFFF" stroke="#4A90D9" stroke-width="2"/>
+          <rect x="160" y="80" width="80" height="6" fill="#A9D3F5"/>
+          <rect x="160" y="92" width="55" height="6" fill="#A9D3F5"/>
+          <polygon points="200,40 240,58 200,76 160,58" fill="#4A90D9"/>
+          <line x1="230" y1="58" x2="230" y2="76" stroke="#2E6DA4" stroke-width="2"/>
+          <circle cx="230" cy="79" r="3" fill="#2E6DA4"/>
+        </svg>
         <div class="news-body">
           <div class="news-date">15 · 06 · 2026 · Tuyển sinh</div>
           <h3>Thông báo tuyển sinh 2026–2027 theo nhiều phương thức xét tuyển</h3>
@@ -295,7 +361,17 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
         </div>
       </a>
       <a href="#" class="news-card">
-        <img src="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=600&q=80" alt="Hội thảo AI">
+        <svg class="news-illus" viewBox="0 0 400 160" xmlns="http://www.w3.org/2000/svg">
+          <rect width="400" height="160" fill="#EFF7FF"/>
+          <rect x="140" y="55" width="120" height="75" rx="6" fill="#FFFFFF" stroke="#4A90D9" stroke-width="2"/>
+          <circle cx="200" cy="92" r="20" fill="none" stroke="#4A90D9" stroke-width="2.5"/>
+          <circle cx="200" cy="92" r="5" fill="#4A90D9"/>
+          <line x1="200" y1="72" x2="200" y2="80" stroke="#4A90D9" stroke-width="2"/>
+          <line x1="200" y1="104" x2="200" y2="112" stroke="#4A90D9" stroke-width="2"/>
+          <line x1="180" y1="92" x2="188" y2="92" stroke="#4A90D9" stroke-width="2"/>
+          <line x1="212" y1="92" x2="220" y2="92" stroke="#4A90D9" stroke-width="2"/>
+          <rect x="118" y="130" width="164" height="8" rx="3" fill="#A9D3F5"/>
+        </svg>
         <div class="news-body">
           <div class="news-date">10 · 06 · 2026 · Sự kiện</div>
           <h3>Hội thảo AI và chuyển đổi số trong giáo dục đại học</h3>
@@ -303,7 +379,16 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
         </div>
       </a>
       <a href="#" class="news-card">
-        <img src="https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=600&q=80" alt="Việc làm">
+        <svg class="news-illus" viewBox="0 0 400 160" xmlns="http://www.w3.org/2000/svg">
+          <rect width="400" height="160" fill="#DCEEFF"/>
+          <rect x="160" y="80" width="80" height="55" rx="6" fill="#FFFFFF" stroke="#4A90D9" stroke-width="2"/>
+          <rect x="182" y="65" width="36" height="18" rx="3" fill="none" stroke="#4A90D9" stroke-width="2"/>
+          <line x1="160" y1="98" x2="240" y2="98" stroke="#4A90D9" stroke-width="2"/>
+          <circle cx="145" cy="112" r="12" fill="#4A90D9"/>
+          <circle cx="255" cy="112" r="12" fill="#2E6DA4"/>
+          <rect x="120" y="124" width="50" height="10" rx="5" fill="#A9D3F5"/>
+          <rect x="230" y="124" width="50" height="10" rx="5" fill="#A9D3F5"/>
+        </svg>
         <div class="news-body">
           <div class="news-date">05 · 06 · 2026 · Sinh viên</div>
           <h3>Ngày hội việc làm 2026 — hơn 100 doanh nghiệp tham gia</h3>
@@ -315,8 +400,8 @@ footer{background:var(--blue-dark);padding:48px 6% 28px}
 </section>
 
 <div class="ocr-banner">
-  <h2>Hệ thống OCR nhận dạng CCCD</h2>
-  <p>Trích xuất thông tin căn cước tự động bằng AI — xuất Word & Excel trong vài giây.</p>
+  <h2>Hệ thống OCR nhận dạng Hồ Sơ Xét Tuyển</h2>
+  <p>Trích xuất thông tin hồ sơ xét tuyển tự động bằng AI — xuất Word & PDF .</p>
   <a href="/dashboard" class="btn-solid">Truy cập hệ thống →</a>
 </div>
 

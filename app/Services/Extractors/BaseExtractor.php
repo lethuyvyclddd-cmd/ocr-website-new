@@ -114,19 +114,70 @@ abstract class BaseExtractor
     }
     protected function splitAddress(string $address): array
     {
-        $segments = array_values(array_filter(array_map(
-            fn ($s) => trim(preg_replace('/\s+/', ' ', $s)),
-            explode(',', $address)
-        )));
-
         $result = [];
-        if (count($segments) >= 1) {
-            $result['province_name'] = end($segments);
+
+        // Dò tên tỉnh CŨ có thật trong dictionary (immune với việc thiếu dấu
+        // phẩy/nhãn), lấy luôn vị trí xuất hiện để cắt phần còn lại.
+        $provinces = \App\Dictionaries\Provinces::all();
+        usort($provinces, fn ($a, $b) => mb_strlen($b, 'UTF-8') <=> mb_strlen($a, 'UTF-8'));
+
+        $matchedRaw = null;
+        $matchedPos = false;
+
+        foreach ($provinces as $province) {
+            $pos = mb_stripos($address, $province, 0, 'UTF-8');
+            if ($pos !== false) {
+                $matchedRaw = $province;
+                $matchedPos = $pos;
+                break;
+            }
         }
-        if (count($segments) >= 2) {
-            $result['ward_name'] = $segments[count($segments) - 2];
+
+        // Không dò được tỉnh nào trong dictionary -> fallback về logic thuần
+        // theo dấu phẩy (segment cuối = tỉnh, áp chót = phường/xã).
+        if ($matchedRaw === null) {
+            $segments = $this->splitByComma($address);
+            if (count($segments) >= 1) {
+                $result['province_name'] = end($segments);
+            }
+            if (count($segments) >= 2) {
+                $result['ward_name'] = $segments[count($segments) - 2];
+            }
+            return $result;
+        }
+
+        // Map về tên tỉnh MỚI sau sáp nhập (vd "Kiên Giang" -> "An Giang")
+        $result['province_name'] = \App\Services\ProvinceMergeMapper::toNewName($matchedRaw);
+
+        // Phần còn lại của địa chỉ, sau khi cắt bỏ tên tỉnh vừa dò được
+        $remainder = trim(rtrim(mb_substr($address, 0, $matchedPos, 'UTF-8'), " ,"));
+
+        // Ưu tiên bắt theo từ khoá "Phường/Xã/Thị trấn" nếu CÓ (xử lý tốt case
+        // dính liền nhiều cấp không dấu phẩy, vd "Kp3 Phường X Thành Phố Y")
+        if (preg_match('/(?:phường|xã|thị trấn)\s+([a-zA-ZÀ-ỹ0-9\s]+?)(?=,|\s+(?:thành phố|quận|huyện|thị xã)|$)/iu', $remainder, $m)) {
+            $result['ward_name'] = trim($m[1]);
+        } else {
+            // FALLBACK: không có từ khoá nào cả (ghi tắt kiểu "Xã, Huyện" trần
+            // trụi, vd "Vân Khánh Đông, An Minh") -> lấy segment GẦN TỈNH NHẤT
+            // (sau khi tách theo dấu phẩy trên phần remainder) làm ward_name.
+            $segments = $this->splitByComma($remainder);
+            if (! empty($segments)) {
+                $result['ward_name'] = end($segments);
+            }
+        }
+
+        if (preg_match('/(?:thành phố|quận|huyện|thị xã)\s+([a-zA-ZÀ-ỹ\s]+?)$/iu', $remainder, $m)) {
+            $result['district_name'] = trim($m[1]);
         }
 
         return $result;
+    }
+
+    protected function splitByComma(string $str): array
+    {
+        return array_values(array_filter(array_map(
+            fn ($s) => trim(preg_replace('/\s+/', ' ', $s)),
+            explode(',', $str)
+        ), fn ($s) => $s !== ''));
     }
 }

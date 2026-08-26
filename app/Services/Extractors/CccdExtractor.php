@@ -45,12 +45,28 @@ class CccdExtractor extends BaseExtractor
 
         $result['birth_date'] = $this->firstDateMatch($text);
 
-        if (preg_match('/Gi[oớ][ií]{0,1}\s*t[ií]nh.{0,15}(Nam|N[uữ])/iu', $text, $m)) {
+        // SỬA BUG: regex cũ thiếu modifier 's' (dotall) nên "." không khớp
+        // qua ký tự xuống dòng. Trên CCCD, "Giới tính/Sex" và giá trị
+        // ("Nam"/"Nữ") thường nằm ở 2 DÒNG KHÁC NHAU (OCR tách riêng từng
+        // vùng chữ) -> regex cũ luôn KHÔNG match được trường hợp này, rơi
+        // xuống nhánh fallback bên dưới.
+        // Nhánh fallback cũ (\bNam\b tìm trong TOÀN VĂN BẢN) lại vô tình
+        // khớp trúng chữ "Nam" trong "Việt Nam" (ở dòng Quốc tịch/
+        // Nationality) TRƯỚC KHI kịp thử tìm "Nữ" -> luôn ra kết quả SAI
+        // là "Nam" dù CCCD thật ghi "Nữ". Đã xác nhận đây là nguyên nhân
+        // khiến gender luôn bị ghi "Nam" bất kể giới tính thật.
+        if (preg_match('/Gi[oớ][ií]{0,1}\s*t[ií]nh.{0,20}(Nam|N[uữ])/isu', $text, $m)) {
             $result['gender'] = mb_strtolower($m[1]) === 'nam' ? 'Nam' : 'Nữ';
-        } elseif (preg_match('/\bNam\b/u', $text)) {
-            $result['gender'] = 'Nam';
-        } elseif (preg_match('/\bN[uữ]\b/u', $text)) {
-            $result['gender'] = 'Nữ';
+        } else {
+            // Loại cụm "Việt Nam"/"Viet Nam"/"VIETNAM" trước khi fallback,
+            // để tránh nhầm chữ "Nam" trong tên quốc gia với giới tính.
+            $textNoCountryName = preg_replace('/(vi[eệ]t\s*nam|vietnam)/iu', '', $text);
+
+            if (preg_match('/\bNam\b/u', $textNoCountryName)) {
+                $result['gender'] = 'Nam';
+            } elseif (preg_match('/\bN[uữ]\b/u', $textNoCountryName)) {
+                $result['gender'] = 'Nữ';
+            }
         }
 
         // Không lấy "Nơi sinh"/"Quê quán" từ CCCD nữa - dùng "Nơi sinh" trên

@@ -507,38 +507,30 @@ class DiplomaExtractor extends BaseExtractor
         // SỐ HIỆU BẰNG + SỐ VÀO SỔ BẰNG
         // ================================================================
         //
-        // Ví dụ OCR thực tế:
-        //
-        //   hiệu:
-        //   00426
-        //
-        // hoặc:
-        //
-        //   00426
-        //   hiệu:
-        //
-        // hoặc:
-        //
-        //   số hiệu bằng:
-        //   00426
-        //
-        // hoặc:
-        //
-        //   1981 vào số gốc cấp bằng tốt nghiệp:
-        //   2024058
-        //
         // Mục tiêu:
-        //   diploma_number          = 00426
-        //   diploma_registry_number = C2024058
         //
-        // KHÔNG lấy:
-        //   - số hiệu bản sao
-        //   - mã nằm trong các dòng không liên quan
+        // diploma_number
+        //     Ví dụ: 009167
+        //
+        // diploma_registry_number
+        //     Ví dụ: 691-12/TNOBĐM
+        //
+        // QUAN TRỌNG:
+        // - Không lấy "Số hiệu bản sao"
+        // - Không lấy số đứng trước nhãn "Số hiệu"
+        // - Không làm mất "-" hoặc "/" của số vào sổ
+        // - Ưu tiên giá trị nằm ngay sau nhãn
+        // - Hỗ trợ OCR đảo thứ tự nhãn / giá trị
+        // - Số vào sổ KHÔNG BAO GIỜ được trùng với số hiệu bằng (2 field
+        //   khác nhau trên phôi bằng thật) — nếu trùng thì đó là dấu hiệu
+        //   OCR/label bị đọc lệch, phải bỏ qua ứng viên đó, KHÔNG được
+        //   "vá" bằng cách tự chế thêm ký tự (vd tự thêm "C") vào giá trị
+        //   của số hiệu bằng để biến nó thành số vào sổ.
         // ================================================================
 
 
         // ================================================================
-        // HÀM PHỤ: làm sạch mã số
+        // HÀM PHỤ 1: LÀM SẠCH SỐ HIỆU BẰNG
         // ================================================================
 
         $cleanDiplomaCode = function (?string $value): ?string {
@@ -553,16 +545,17 @@ class DiplomaExtractor extends BaseExtractor
                 return null;
             }
 
-            // Bỏ khoảng trắng, dấu chấm, dấu gạch...
+            // Số hiệu bằng thường chỉ gồm chữ + số.
+            // Bỏ khoảng trắng, "-", "/", ".", ":"...
             $value = preg_replace('/[^A-Za-z0-9]/', '', $value);
 
-            if ($value === '') {
+            if ($value === null || $value === '') {
                 return null;
             }
 
             $value = strtoupper($value);
 
-            // Một số lỗi OCR thường gặp trong mã
+            // Một số lỗi OCR thường gặp
             $value = strtr($value, [
                 'O' => '0',
                 'I' => '1',
@@ -574,17 +567,164 @@ class DiplomaExtractor extends BaseExtractor
 
 
         // ================================================================
+        // HÀM PHỤ 2: LÀM SẠCH SỐ VÀO SỔ
+        // ================================================================
+        //
+        // KHÔNG được dùng cleanDiplomaCode() ở đây.
+        //
+        // Vì số vào sổ có thể có:
+        //
+        //     691-12/TNOBĐM
+        //     891-12/TNOBĐM
+        //     C2024058
+        //     2024058
+        //
+        // Phải giữ nguyên "-" và "/"
+        // ================================================================
+
+        $cleanRegistryCode = function (?string $value): ?string {
+
+            if ($value === null) {
+                return null;
+            }
+
+            $value = trim($value);
+
+            if ($value === '') {
+                return null;
+            }
+
+            // Xóa khoảng trắng nhưng GIỮ "-" và "/"
+            $value = preg_replace('/\s+/u', '', $value);
+
+            if ($value === null || $value === '') {
+                return null;
+            }
+
+            // Bỏ dấu câu dư ở đầu/cuối
+            $value = trim($value, ".,:;");
+
+            if ($value === '') {
+                return null;
+            }
+
+            $value = strtoupper($value);
+
+            return $value;
+        };
+
+
+        // ================================================================
+        // HÀM PHỤ 3: KIỂM TRA ỨNG VIÊN CÓ PHẢI MÃ SỐ HỢP LỆ KHÔNG
+        // ================================================================
+
+        $isValidDiplomaCandidate = function (?string $candidate) use (&$result, $cleanDiplomaCode): bool {
+
+            if ($candidate === null) {
+                return false;
+            }
+
+            $candidate = trim($candidate);
+
+            if ($candidate === '') {
+                return false;
+            }
+
+            // Không lấy dòng mô tả
+            $normCandidate = trim($this->normalize($candidate));
+
+            if (
+                str_contains($normCandidate, 'ban sao')
+                || str_contains($normCandidate, 'hieu truong')
+                || str_contains($normCandidate, 'vao so')
+                || str_contains($normCandidate, 'cap bang')
+            ) {
+                return false;
+            }
+
+            // Phải có số THẬT trong OCR gốc.
+            // Không kiểm tra sau khi O/I/L đã bị đổi thành số.
+            if (!preg_match('/\d/', $candidate)) {
+                return false;
+            }
+
+            return true;
+        };
+
+        /**
+         * HÀM PHỤ 4 (THÊM MỚI — FIX BUG "C001471"):
+         *
+         * Kiểm tra ứng viên có đang TRÙNG với diploma_number đã tìm được
+         * hay không (so sánh sau khi làm sạch theo kiểu số hiệu bằng, vì
+         * số hiệu bằng và số vào sổ có thể được OCR đọc lệch nhãn cho
+         * nhau nhưng giá trị số thì giống hệt nhau).
+         *
+         * Case thực tế gây bug:
+         *
+         *     Số hiệu:
+         *     001471
+         *     171/C/2023
+         *
+         * Do dòng nhãn "Số vào sổ gốc cấp bằng..." bị OCR đọc nát thành
+         * một câu vô nghĩa nhưng vẫn chứa cụm "vào số", hệ thống tưởng
+         * đó là nhãn "Số vào sổ" thật, rồi quét các dòng lân cận và lấy
+         * NHẦM "001471" (vốn là Số hiệu bằng) làm ứng viên Số vào sổ.
+         * Vì "001471" là chuỗi số thuần 6 chữ số, code phía dưới tưởng
+         * OCR làm rớt chữ "C" ở đầu số vào sổ nên tự thêm "C" vào ->
+         * ra kết quả SAI "C001471", trong khi giá trị đúng "171/C/2023"
+         * nằm ngay dòng kế tiếp lại không được xét tới vì vòng lặp đã
+         * break sớm.
+         *
+         * Số hiệu bằng và Số vào sổ LUÔN LÀ 2 GIÁ TRỊ KHÁC NHAU trên
+         * phôi bằng thật, nên nếu ứng viên trùng diploma_number, chắc
+         * chắn đây là lấy nhầm dòng — phải bỏ qua để đi tiếp ứng viên
+         * khác, KHÔNG được nhận rồi "vá" bằng cách tự thêm ký tự.
+         */
+        $isSameAsDiplomaNumber = function (?string $candidate) use (&$result, $cleanDiplomaCode): bool {
+
+            if (empty($result['diploma_number']) || $candidate === null) {
+                return false;
+            }
+
+            $cleaned = $cleanDiplomaCode($candidate);
+
+            return $cleaned !== null && $cleaned === $result['diploma_number'];
+        };
+
+
+        // ================================================================
         // SỐ HIỆU BẰNG
+        // ================================================================
+        //
+        // Case quan trọng:
+        //
+        //     20100
+        //     Số hiệu
+        //     009167
+        //
+        // Kết quả phải:
+        //
+        //     diploma_number = 009167
+        //
+        // KHÔNG được lấy 20100.
+        //
         // ================================================================
 
         if (empty($result['diploma_number'])) {
 
             foreach ($lines as $i => $line) {
 
+                $line = trim($line);
+
+                if ($line === '') {
+                    continue;
+                }
+
                 $normLine = trim($this->normalize($line));
 
+
                 // ------------------------------------------------------------
-                // 1. Bỏ qua "số hiệu bản sao"
+                // Bỏ hoàn toàn "Số hiệu bản sao"
                 // ------------------------------------------------------------
 
                 if (
@@ -594,25 +734,22 @@ class DiplomaExtractor extends BaseExtractor
                     continue;
                 }
 
+
                 // ------------------------------------------------------------
-                // 2. Nhận diện nhãn "số hiệu bằng"
+                // Nhận diện nhãn Số hiệu
                 // ------------------------------------------------------------
 
                 $isDiplomaLabel =
-                    str_contains($normLine, 'so hieu bang')
+                    str_contains($normLine, 'so hieu')
+                    || str_contains($normLine, 'so hieu bang')
                     || str_contains($normLine, 'so hieu van bang')
                     || str_contains($normLine, 'hieu bang');
 
-                // ------------------------------------------------------------
-                // 3. OCR thực tế có thể chỉ đọc thành "hiệu:"
-                //
-                // Ví dụ:
-                //   hiệu:
-                //   00426
-                //
-                // Không cần bắt "so hieu".
-                // ------------------------------------------------------------
 
+                // OCR đôi khi chỉ đọc:
+                //
+                //     hiệu:
+                //
                 if (
                     !$isDiplomaLabel
                     && preg_match('/^hieu\s*[:.]?$/u', $normLine)
@@ -620,19 +757,99 @@ class DiplomaExtractor extends BaseExtractor
                     $isDiplomaLabel = true;
                 }
 
+
                 if (!$isDiplomaLabel) {
                     continue;
                 }
 
+
                 // ------------------------------------------------------------
-                // 4. Tìm mã ở dòng gần nhãn
+                // 1. ƯU TIÊN GIÁ TRỊ NGAY TRÊN CÙNG DÒNG
+                //
+                // Ví dụ:
+                //
+                //     Số hiệu: 009167
+                //
+                // Phải lấy:
+                //
+                //     009167
+                // ------------------------------------------------------------
+
+                $sameLineCandidate = null;
+
+                $labelPatterns = [
+                    'so hieu van bang',
+                    'so hieu bang',
+                    'so hieu',
+                    'hieu bang',
+                    'hieu',
+                ];
+
+                foreach ($labelPatterns as $label) {
+
+                    $pos = mb_stripos(
+                        $normLine,
+                        $label,
+                        0,
+                        'UTF-8'
+                    );
+
+                    if ($pos === false) {
+                        continue;
+                    }
+
+                    $labelLength = mb_strlen(
+                        $label,
+                        'UTF-8'
+                    );
+
+                    $afterLabel = mb_substr(
+                        $line,
+                        $pos + $labelLength,
+                        null,
+                        'UTF-8'
+                    );
+
+                    $afterLabel = trim(
+                        $afterLabel,
+                        " \t:.-–"
+                    );
+
+                    if (
+                        $afterLabel !== ''
+                        && preg_match('/\d/', $afterLabel)
+                    ) {
+                        $sameLineCandidate = $afterLabel;
+                        break;
+                    }
+                }
+
+
+                // ------------------------------------------------------------
+                // 2. TẠO DANH SÁCH ỨNG VIÊN
                 //
                 // Ưu tiên:
-                //   dòng sau
-                //   dòng trước
-                //   2 dòng sau
-                //   2 dòng trước
+                //
+                //     cùng dòng
+                //     dòng sau
+                //     dòng trước
+                //     2 dòng sau
+                //     2 dòng trước
+                //
+                // Điều này cực kỳ quan trọng với:
+                //
+                //     20100
+                //     Số hiệu
+                //     009167
+                //
+                // Vì dòng SAU "Số hiệu" mới là giá trị đúng.
                 // ------------------------------------------------------------
+
+                $allCandidates = [];
+
+                if ($sameLineCandidate !== null) {
+                    $allCandidates[] = $sameLineCandidate;
+                }
 
                 $candidateIndexes = [
                     $i + 1,
@@ -655,15 +872,17 @@ class DiplomaExtractor extends BaseExtractor
                         continue;
                     }
 
-                    $normCandidate = trim($this->normalize($candidate));
+                    $allCandidates[] = $candidate;
+                }
 
-                    // Không lấy lại các dòng nhãn
-                    if (
-                        str_contains($normCandidate, 'ban sao')
-                        || str_contains($normCandidate, 'hieu truong')
-                        || str_contains($normCandidate, 'vao so')
-                        || str_contains($normCandidate, 'cap bang')
-                    ) {
+
+                // ------------------------------------------------------------
+                // 3. DUYỆT ỨNG VIÊN
+                // ------------------------------------------------------------
+
+                foreach ($allCandidates as $candidate) {
+
+                    if (!$isValidDiplomaCandidate($candidate)) {
                         continue;
                     }
 
@@ -673,25 +892,27 @@ class DiplomaExtractor extends BaseExtractor
                         continue;
                     }
 
-                    // Số hiệu bằng thường khá ngắn
-                    if (strlen($cleaned) < 3 || strlen($cleaned) > 15) {
+
+                    // Số hiệu thường không quá dài
+                    if (
+                        strlen($cleaned) < 3
+                        || strlen($cleaned) > 15
+                    ) {
                         continue;
                     }
 
-                    // Phải có ít nhất 1 chữ số
-                    if (!preg_match('/\d/', $cleaned)) {
-                        continue;
-                    }
 
-                    // Không nhận chuỗi toàn chữ
+                    // Không nhận toàn chữ
                     if (preg_match('/^[A-Z]+$/', $cleaned)) {
                         continue;
                     }
+
 
                     $result['diploma_number'] = $cleaned;
 
                     break;
                 }
+
 
                 if (!empty($result['diploma_number'])) {
                     break;
@@ -704,26 +925,20 @@ class DiplomaExtractor extends BaseExtractor
         // FALLBACK SỐ HIỆU BẰNG
         // ================================================================
         //
-        // Trường hợp OCR đọc:
+        // Hỗ trợ OCR đảo:
         //
-        //   00426
-        //   hiệu:
+        //     009167
+        //     Số hiệu
         //
-        // Hoặc nhãn bị mất gần như hoàn toàn.
-        //
-        // Chỉ nhận mã ngắn dạng:
-        //   00426
-        //   A0426
-        //   0426
-        //
-        // và phải nằm gần dòng "hiệu".
         // ================================================================
 
         if (empty($result['diploma_number'])) {
 
             foreach ($lines as $i => $line) {
 
-                $normLine = trim($this->normalize($line));
+                $normLine = trim(
+                    $this->normalize($line)
+                );
 
                 if (
                     !str_contains($normLine, 'hieu')
@@ -732,55 +947,58 @@ class DiplomaExtractor extends BaseExtractor
                     continue;
                 }
 
-                // Không xử lý "hiệu bản sao"
+                // Tuyệt đối bỏ "hiệu bản sao"
                 if (str_contains($normLine, 'ban sao')) {
                     continue;
                 }
 
-                for ($distance = 1; $distance <= 3; $distance++) {
 
-                    foreach ([$i - $distance, $i + $distance] as $candidateIndex) {
+                // Ưu tiên dòng SAU trước
+                $candidateIndexes = [
+                    $i + 1,
+                    $i - 1,
+                    $i + 2,
+                    $i - 2,
+                    $i + 3,
+                    $i - 3,
+                ];
 
-                        if (!isset($lines[$candidateIndex])) {
-                            continue;
-                        }
 
-                        $candidate = trim($lines[$candidateIndex]);
+                foreach ($candidateIndexes as $candidateIndex) {
 
-                        if ($candidate === '') {
-                            continue;
-                        }
-
-                        $cleaned = $cleanDiplomaCode($candidate);
-
-                        if ($cleaned === null) {
-                            continue;
-                        }
-
-                        if (strlen($cleaned) < 3 || strlen($cleaned) > 15) {
-                            continue;
-                        }
-
-                        if (!preg_match('/\d/', $cleaned)) {
-                            continue;
-                        }
-
-                        $normCandidate = $this->normalize($candidate);
-
-                        if (
-                            str_contains($normCandidate, 'ban sao')
-                            || str_contains($normCandidate, 'hieu truong')
-                            || str_contains($normCandidate, 'vao so')
-                            || str_contains($normCandidate, 'cap bang')
-                        ) {
-                            continue;
-                        }
-
-                        $result['diploma_number'] = $cleaned;
-
-                        break 2;
+                    if (!isset($lines[$candidateIndex])) {
+                        continue;
                     }
+
+                    $candidate = trim($lines[$candidateIndex]);
+
+                    if (!$isValidDiplomaCandidate($candidate)) {
+                        continue;
+                    }
+
+                    $cleaned = $cleanDiplomaCode($candidate);
+
+                    if ($cleaned === null) {
+                        continue;
+                    }
+
+                    if (
+                        strlen($cleaned) < 3
+                        || strlen($cleaned) > 15
+                    ) {
+                        continue;
+                    }
+
+                    if (preg_match('/^[A-Z]+$/', $cleaned)) {
+                        continue;
+                    }
+
+
+                    $result['diploma_number'] = $cleaned;
+
+                    break;
                 }
+
 
                 if (!empty($result['diploma_number'])) {
                     break;
@@ -793,20 +1011,21 @@ class DiplomaExtractor extends BaseExtractor
         // SỐ VÀO SỔ CẤP BẰNG
         // ================================================================
         //
-        // Các dạng OCR:
+        // Case của Vy:
         //
-        //   số vào sổ cấp bằng:
-        //   2024058
+        //     Số vào số cấp bằng 691-12/TNOBĐM:
         //
-        // hoặc OCR đảo:
+        // Phải lấy NGUYÊN:
         //
-        //   2024058
-        //   vào số cấp bằng
+        //     691-12/TNOBĐM
         //
-        // hoặc:
+        // KHÔNG được lấy:
         //
-        //   1981 vào số gốc cấp bằng tốt nghiệp:
-        //   2024058
+        //     12/TNOBĐM
+        //
+        // KHÔNG được biến thành:
+        //
+        //     12TNOBĐM
         //
         // ================================================================
 
@@ -814,10 +1033,19 @@ class DiplomaExtractor extends BaseExtractor
 
             foreach ($lines as $i => $line) {
 
-                $normLine = trim($this->normalize($line));
+                $line = trim($line);
+
+                if ($line === '') {
+                    continue;
+                }
+
+                $normLine = trim(
+                    $this->normalize($line)
+                );
+
 
                 // ------------------------------------------------------------
-                // Nhận diện các biến thể của nhãn
+                // Nhận diện nhãn số vào sổ
                 // ------------------------------------------------------------
 
                 $isRegistryLabel =
@@ -829,13 +1057,95 @@ class DiplomaExtractor extends BaseExtractor
                     || str_contains($normLine, 'so vao goc cap bang')
                     || str_contains($normLine, 'vao so goc');
 
+
                 if (!$isRegistryLabel) {
                     continue;
                 }
 
+
                 // ------------------------------------------------------------
-                // TÌM MÃ SAU NHÃN
+                // 1. GIÁ TRỊ NẰM CÙNG DÒNG
+                //
+                // KHÔNG được dùng:
+                //
+                //     /^[^:\-–]*[:\-–]+(.+)$/
+                //
+                // vì dấu "-" có thể là một phần của mã.
+                //
+                // Ví dụ:
+                //
+                //     691-12/TNOBĐM
+                //
                 // ------------------------------------------------------------
+
+                $sameLineCandidate = null;
+
+                $labelPatterns = [
+                    'so vao so cap bang',
+                    'vao so cap bang',
+                    'vao so cap',
+                    'so vao so',
+                    'vao so goc cap bang',
+                    'so vao goc cap bang',
+                    'vao so goc',
+                ];
+
+
+                foreach ($labelPatterns as $label) {
+
+                    $pos = mb_stripos(
+                        $normLine,
+                        $label,
+                        0,
+                        'UTF-8'
+                    );
+
+                    if ($pos === false) {
+                        continue;
+                    }
+
+                    $labelLength = mb_strlen(
+                        $label,
+                        'UTF-8'
+                    );
+
+                    $afterLabel = mb_substr(
+                        $line,
+                        $pos + $labelLength,
+                        null,
+                        'UTF-8'
+                    );
+
+
+                    // Chỉ bỏ ":" hoặc khoảng trắng ở đầu.
+                    //
+                    // KHÔNG bỏ "-" vì "-" có thể là một phần mã.
+                    $afterLabel = trim(
+                        $afterLabel,
+                        " \t:."
+                    );
+
+
+                    if (
+                        $afterLabel !== ''
+                        && preg_match('/\d/', $afterLabel)
+                    ) {
+                        $sameLineCandidate = $afterLabel;
+                        break;
+                    }
+                }
+
+
+                // ------------------------------------------------------------
+                // 2. DANH SÁCH ỨNG VIÊN
+                // ------------------------------------------------------------
+
+                $allCandidates = [];
+
+                if ($sameLineCandidate !== null) {
+                    $allCandidates[] = $sameLineCandidate;
+                }
+
 
                 $candidateIndexes = [
                     $i + 1,
@@ -846,60 +1156,96 @@ class DiplomaExtractor extends BaseExtractor
                     $i - 3,
                 ];
 
+
                 foreach ($candidateIndexes as $candidateIndex) {
 
                     if (!isset($lines[$candidateIndex])) {
                         continue;
                     }
 
-                    $candidate = trim($lines[$candidateIndex]);
+                    $candidate = trim(
+                        $lines[$candidateIndex]
+                    );
 
                     if ($candidate === '') {
                         continue;
                     }
 
-                    $normCandidate = trim($this->normalize($candidate));
+                    $allCandidates[] = $candidate;
+                }
 
-                    // Bỏ các dòng mô tả
-                    if (
-                        str_contains($normCandidate, 'ban sao')
-                        || str_contains($normCandidate, 'hieu truong')
-                        || str_contains($normCandidate, 'vao so')
-                        || str_contains($normCandidate, 'cap bang')
-                        || str_contains($normCandidate, 'pham hoang')
-                    ) {
+
+                // ------------------------------------------------------------
+                // 3. XỬ LÝ ỨNG VIÊN
+                // ------------------------------------------------------------
+
+                foreach ($allCandidates as $candidate) {
+
+                    if (!$isValidDiplomaCandidate($candidate)) {
                         continue;
                     }
 
-                    $cleaned = $cleanDiplomaCode($candidate);
+
+                    // FIX (bug "C001471"): không chấp nhận ứng viên trùng
+                    // với diploma_number — 2 field này không bao giờ giống
+                    // nhau trên phôi bằng thật, trùng nghĩa là lấy nhầm dòng.
+                    if ($isSameAsDiplomaNumber($candidate)) {
+                        continue;
+                    }
+
+
+                    // QUAN TRỌNG:
+                    // số vào sổ dùng cleanRegistryCode()
+                    //
+                    // Không được dùng cleanDiplomaCode()
+                    // vì nó xóa "-" và "/".
+                    $cleaned = $cleanRegistryCode($candidate);
+
 
                     if ($cleaned === null) {
                         continue;
                     }
 
-                    // Số vào sổ thường >= 6 ký tự
-                    if (strlen($cleaned) < 6 || strlen($cleaned) > 20) {
+
+                    // Số vào sổ thường có ít nhất 3 ký tự
+                    if (
+                        strlen($cleaned) < 3
+                        || strlen($cleaned) > 30
+                    ) {
                         continue;
                     }
 
-                    if (!preg_match('/\d/', $cleaned)) {
+
+                    // Phải có ít nhất một chữ số thật
+                    if (!preg_match('/\d/', $candidate)) {
                         continue;
                     }
 
-                    // Nếu chỉ có số thì thêm C ở đầu
+
+                    // --------------------------------------------------------
+                    // Nếu mã chỉ toàn số:
                     //
-                    // 2024058
-                    // ↓
-                    // C2024058
+                    //     2024058
                     //
-                    if (preg_match('/^\d{6,10}$/', $cleaned)) {
+                    // thì giữ logic cũ:
+                    //
+                    //     C2024058
+                    //
+                    // Nhưng nếu đã có "-" hoặc "/" thì KHÔNG thêm C.
+                    // --------------------------------------------------------
+
+                    if (
+                        preg_match('/^\d{6,10}$/', $cleaned)
+                    ) {
                         $cleaned = 'C' . $cleaned;
                     }
+
 
                     $result['diploma_registry_number'] = $cleaned;
 
                     break;
                 }
+
 
                 if (!empty($result['diploma_registry_number'])) {
                     break;
@@ -914,17 +1260,24 @@ class DiplomaExtractor extends BaseExtractor
         //
         // Ví dụ:
         //
-        //   2024058
-        //   vào số gốc cấp bằng tốt nghiệp:
+        //     691-12/TNOBĐM
+        //     Số vào số cấp bằng
         //
-        // Khi đó nhãn nằm SAU giá trị.
+        // Hoặc:
+        //
+        //     2024058
+        //     Vào số gốc cấp bằng
+        //
         // ================================================================
 
         if (empty($result['diploma_registry_number'])) {
 
             foreach ($lines as $i => $line) {
 
-                $normLine = trim($this->normalize($line));
+                $normLine = trim(
+                    $this->normalize($line)
+                );
+
 
                 if (
                     !str_contains($normLine, 'vao so')
@@ -934,57 +1287,213 @@ class DiplomaExtractor extends BaseExtractor
                     continue;
                 }
 
-                for ($distance = 1; $distance <= 4; $distance++) {
 
-                    foreach ([$i - $distance, $i + $distance] as $candidateIndex) {
+                $candidateIndexes = [
+                    $i - 1,
+                    $i + 1,
+                    $i - 2,
+                    $i + 2,
+                    $i - 3,
+                    $i + 3,
+                    $i - 4,
+                    $i + 4,
+                ];
 
-                        if (!isset($lines[$candidateIndex])) {
-                            continue;
-                        }
 
-                        $candidate = trim($lines[$candidateIndex]);
+                foreach ($candidateIndexes as $candidateIndex) {
 
-                        if ($candidate === '') {
-                            continue;
-                        }
-
-                        $normCandidate = trim($this->normalize($candidate));
-
-                        // Bỏ dòng nhãn
-                        if (
-                            str_contains($normCandidate, 'vao so')
-                            || str_contains($normCandidate, 'cap bang')
-                            || str_contains($normCandidate, 'ban sao')
-                            || str_contains($normCandidate, 'hieu truong')
-                        ) {
-                            continue;
-                        }
-
-                        $cleaned = $cleanDiplomaCode($candidate);
-
-                        if ($cleaned === null) {
-                            continue;
-                        }
-
-                        if (strlen($cleaned) < 6 || strlen($cleaned) > 20) {
-                            continue;
-                        }
-
-                        if (!preg_match('/\d/', $cleaned)) {
-                            continue;
-                        }
-
-                        if (preg_match('/^\d{6,10}$/', $cleaned)) {
-                            $cleaned = 'C' . $cleaned;
-                        }
-
-                        $result['diploma_registry_number'] = $cleaned;
-
-                        break 2;
+                    if (!isset($lines[$candidateIndex])) {
+                        continue;
                     }
+
+
+                    $candidate = trim(
+                        $lines[$candidateIndex]
+                    );
+
+                    if ($candidate === '') {
+                        continue;
+                    }
+
+
+                    $normCandidate = trim(
+                        $this->normalize($candidate)
+                    );
+
+
+                    // Không lấy lại dòng nhãn
+                    if (
+                        str_contains($normCandidate, 'vao so')
+                        || str_contains($normCandidate, 'cap bang')
+                        || str_contains($normCandidate, 'ban sao')
+                        || str_contains($normCandidate, 'hieu truong')
+                    ) {
+                        continue;
+                    }
+
+
+                    // Phải có số thật trong OCR gốc
+                    if (!preg_match('/\d/', $candidate)) {
+                        continue;
+                    }
+
+
+                    // FIX (bug "C001471"): case thực tế —
+                    //
+                    //     Được quét bằng Cam Sícaring vào số gốp bằng tối
+                    //     nghiệp -11 nczozs        <- bị coi nhầm là nhãn
+                    //     Số hiệu:
+                    //     001471                   <- BỊ LẤY NHẦM ở đây
+                    //     171/C/2023               <- giá trị ĐÚNG, không
+                    //                                 bao giờ được xét tới
+                    //                                 vì vòng lặp break sớm
+                    //
+                    // "001471" trùng diploma_number nên chắc chắn là lấy
+                    // nhầm dòng "Số hiệu" — bỏ qua để đi tiếp tới ứng viên
+                    // kế tiếp (ở đây là "171/C/2023").
+                    if ($isSameAsDiplomaNumber($candidate)) {
+                        continue;
+                    }
+
+
+                    $cleaned = $cleanRegistryCode($candidate);
+
+                    if ($cleaned === null) {
+                        continue;
+                    }
+
+
+                    if (
+                        strlen($cleaned) < 3
+                        || strlen($cleaned) > 30
+                    ) {
+                        continue;
+                    }
+
+
+                    // Chỉ thêm C khi giá trị là số thuần.
+                    if (
+                        preg_match('/^\d{6,10}$/', $cleaned)
+                    ) {
+                        $cleaned = 'C' . $cleaned;
+                    }
+
+
+                    $result['diploma_registry_number'] = $cleaned;
+
+                    break 2;
                 }
             }
         }
+        // ================================================================
+        // FALLBACK CUỐI: TÌM MÃ SỐ VÀO SỔ GẦN "SỐ HIỆU"
+        // ================================================================
+        //
+        // Một số bằng có bố cục:
+        //
+        //     Số hiệu
+        //     001471
+        //     Số vào sổ gốc cấp bằng tốt nghiệp
+        //     171/TC/2023
+        //
+        // Nhưng OCR có thể làm mất hoàn toàn dòng nhãn "Số vào sổ..."
+        // và đọc thành:
+        //
+        //     Số hiệu
+        //     001471
+        //     175002013
+        //
+        // Trường hợp này chỉ lấy ứng viên nằm SAU số hiệu.
+        //
+        // Lưu ý: đoạn này KHÔNG tự đoán lại số thật.
+        // Nếu OCR đọc 175002013 thì chỉ lưu giá trị OCR đọc được.
+
+        if (empty($result['diploma_registry_number'])) {
+
+            foreach ($lines as $i => $line) {
+
+                $normLine = trim($this->normalize($line));
+
+                $isDiplomaLabel =
+                    str_contains($normLine, 'so hieu')
+                    || preg_match('/^hieu\s*[:.]?$/u', $normLine);
+
+                if (!$isDiplomaLabel) {
+                    continue;
+                }
+
+                // Tìm các dòng phía sau "Số hiệu"
+                for ($offset = 2; $offset <= 5; $offset++) {
+
+                    $candidateIndex = $i + $offset;
+
+                    if (!isset($lines[$candidateIndex])) {
+                        continue;
+                    }
+
+                    $candidate = trim($lines[$candidateIndex]);
+
+                    if ($candidate === '') {
+                        continue;
+                    }
+
+                    // Chỉ nhận chuỗi có số
+                    if (!preg_match('/\d/', $candidate)) {
+                        continue;
+                    }
+
+                    $normCandidate = trim(
+                        $this->normalize($candidate)
+                    );
+
+                    // Bỏ các dòng chữ mô tả
+                    if (
+                        str_contains($normCandidate, 'hieu truong')
+                        || str_contains($normCandidate, 'cap bang')
+                        || str_contains($normCandidate, 'ban sao')
+                    ) {
+                        continue;
+                    }
+
+                    // FIX (bug "C001471"): không nhận ứng viên trùng
+                    // diploma_number ở fallback này nữa — cùng lý do như
+                    // 2 chỗ trên. Với offset bắt đầu từ 2, ứng viên đầu
+                    // tiên (offset=2) thường CHÍNH LÀ dòng chứa số hiệu
+                    // (i+1 là dòng số hiệu, i+2 là dòng kế tiếp — tuỳ bố
+                    // cục có thể trùng), nên vẫn cần chặn ở đây để an toàn.
+                    if ($isSameAsDiplomaNumber($candidate)) {
+                        continue;
+                    }
+
+                    $cleaned = $cleanRegistryCode($candidate);
+
+                    if ($cleaned === null) {
+                        continue;
+                    }
+
+                    if (
+                        strlen($cleaned) < 5
+                        || strlen($cleaned) > 30
+                    ) {
+                        continue;
+                    }
+
+                    // Phải có số
+                    if (!preg_match('/\d/', $cleaned)) {
+                        continue;
+                    }
+
+                    $result['diploma_registry_number'] = $cleaned;
+
+                    break 2;
+                }
+            }
+        }
+
+
+        // ================================================================
+        // KẾT THÚC SỐ HIỆU BẰNG + SỐ VÀO SỔ BẰNG
+        // ================================================================
 
         // ===== Năm tốt nghiệp (HƯỚNG #1) =====
         if ($fm = $this->fuzzyMatch($text, '/tot\s*nghiep[^\n]{0,20}(\d{4})/u')) {

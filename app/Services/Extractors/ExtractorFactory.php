@@ -8,7 +8,6 @@ class ExtractorFactory
 {
     protected static array $map = [
         'cccd_front' => CccdExtractor::class,
-        'cccd_back' => CccdExtractor::class,
         'diploma_transcript' => DiplomaExtractor::class,
         'admission_form' => AdmissionFormExtractor::class,
     ];

@@ -29,30 +29,50 @@ Route::middleware('auth')->group(function () {
         Route::get('/create', [ApplicantController::class, 'create'])->name('create');
         Route::post('/', [ApplicantController::class, 'store'])->name('store');
 
-        Route::get('/{applicant}', [ApplicantController::class, 'workspace'])->name('workspace');
-        Route::put('/{applicant}', [ApplicantController::class, 'update'])->name('update');
-        Route::delete('/{applicant}', [ApplicantController::class, 'destroy'])->name('destroy');
+        // FIX: ràng buộc {applicant} chỉ nhận số, tránh "nuốt" mất các path
+        // chữ như /applicants/export (đăng ký sau, ở nhóm admin bên dưới)
+        // khiến Laravel hiểu nhầm "export" là id hồ sơ -> 404.
+        Route::get('/{applicant}', [ApplicantController::class, 'workspace'])
+            ->where('applicant', '[0-9]+')
+            ->name('workspace');
 
-        Route::post('/{applicant}/documents', [ApplicantController::class, 'uploadDocument'])->name('documents.upload');
+        Route::put('/{applicant}', [ApplicantController::class, 'update'])
+            ->where('applicant', '[0-9]+')
+            ->name('update');
 
-        // MỚI: gộp hồ sơ hiện tại ({applicant}) vào hồ sơ gốc ({target}) -
-        // dùng cho trường hợp phát hiện trùng CCCD nhưng KHÔNG đủ an toàn
-        // để tự động gộp (findDuplicateApplicant() từ chối), admin tự bấm
-        // nút "Gộp vào hồ sơ cũ" trên giao diện để ép gộp thủ công.
-        Route::post('/{applicant}/merge-into/{target}', [ApplicantController::class, 'mergeInto'])
-            ->name('merge');
+        Route::post('/{applicant}/documents', [ApplicantController::class, 'uploadDocument'])
+            ->where('applicant', '[0-9]+')
+            ->name('documents.upload');
     });
 
     // === Chức năng CHỈ ADMIN ===
     Route::middleware('admin')->group(function () {
+
+        // === Quản lý người dùng ===
         Route::get('/users', [UserManagementController::class, 'index'])->name('users.index');
         Route::post('/users', [UserManagementController::class, 'store'])->name('users.store');
         Route::patch('/users/{id}/role', [UserManagementController::class, 'updateRole'])->name('users.updateRole');
         Route::delete('/users/{id}', [UserManagementController::class, 'destroy'])->name('users.destroy');
 
-        // === Xuất file: CHỈ ADMIN được dùng ===
-        Route::get('/applicants/export', [ApplicantController::class, 'exportBatch'])->name('applicants.export.batch');
-        Route::get('/applicants/{applicant}/export', [ApplicantController::class, 'exportOne'])->name('applicants.export.one');
+        // === Quản lý hồ sơ: CHỈ ADMIN ===
+
+        // Xóa hồ sơ
+        Route::delete('/applicants/{applicant}', [ApplicantController::class, 'destroy'])
+            ->where('applicant', '[0-9]+')
+            ->name('applicants.destroy');
+
+        // Gộp hồ sơ
+        Route::post('/applicants/{applicant}/merge-into/{target}', [ApplicantController::class, 'mergeInto'])
+            ->where(['applicant' => '[0-9]+', 'target' => '[0-9]+'])
+            ->name('applicants.merge');
+
+        // === Xuất file: CHỈ ADMIN ===
+        Route::get('/applicants/export', [ApplicantController::class, 'exportBatch'])
+            ->name('applicants.export.batch');
+
+        Route::get('/applicants/{applicant}/export', [ApplicantController::class, 'exportOne'])
+            ->where('applicant', '[0-9]+')
+            ->name('applicants.export.one');
     });
 
 });

@@ -34,17 +34,7 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
-    'tesseract' => [
-    'binary' => env('TESSERACT_BINARY', 'tesseract'),
-],
 
-    'poppler' => [
-        // Mặc định 'pdftoppm' (đúng khi đã cài poppler-utils và có trong PATH,
-        // ví dụ Linux server: apt install poppler-utils). Trên Windows dev,
-        // set POPPLER_BINARY trong .env trỏ tới đường dẫn đầy đủ pdftoppm.exe.
-        'binary' => env('POPPLER_BINARY', 'pdftoppm'),
-    ],
-    
     'ocr' => [
         'url' => env('OCR_SERVICE_URL', 'http://127.0.0.1:8001'),
     ],

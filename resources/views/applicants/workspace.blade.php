@@ -314,22 +314,42 @@
             const originalText = submitBtn.textContent;
             submitBtn.textContent = 'Đang OCR, vui lòng đợi...';
 
-            fetch(uploadForm.action, {
+                        fetch(uploadForm.action, {
                 method: 'POST',
                 body: formData,
                 credentials: 'same-origin',
+                redirect: 'manual', // không cho fetch tự động follow redirect 302 gốc (nếu server lỡ trả về)
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
                 },
             })
             .then(function (response) {
                 if (!response.ok) {
-                    return response.text().then(function (text) {
-                        throw new Error('Lỗi ' + response.status + ': ' + text);
+                    // Lỗi validate (422) hoặc lỗi server không mong muốn (500)
+                    return response.json().catch(function () {
+                        return null;
+                    }).then(function (data) {
+                        const msg = data && data.errors
+                            ? Object.values(data.errors).flat().join('\n')
+                            : (data && data.message ? data.message : 'Lỗi ' + response.status);
+                        throw new Error(msg);
                     });
                 }
-                // Thành công -> reload lại trang để thấy dữ liệu OCR mới điền vào form
-                window.location.reload();
+                return response.json();
+            })
+            .then(function (data) {
+                // Server luôn trả { redirect: "..." } (xem
+                // ApplicantController::respondWithRedirect()) - điều hướng bằng
+                // request GET hoàn toàn mới để session flash (success/error/
+                // warning/duplicate_*) được hiển thị đúng, KHÔNG dùng
+                // window.location.reload() vì trang hiện tại không phải là
+                // trang chứa flash message mới nhất.
+                if (data && data.redirect) {
+                    window.location.href = data.redirect;
+                } else {
+                    window.location.reload();
+                }
             })
             .catch(function (err) {
                 if (loading) loading.style.display = 'none';

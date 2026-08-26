@@ -86,33 +86,90 @@ class AdmissionFormExtractor extends BaseExtractor
     {
         $result = [];
 
-        $lines = array_values(array_filter(array_map('trim', explode("\n", $text))));
+        $lines = array_values(
+            array_filter(
+                array_map('trim', explode("\n", $text))
+            )
+        );
 
         if (preg_match('/từ xa năm[:\s]+(\d{4})/iu', $text, $m)) {
             $result['admission_year'] = $m[1];
         }
 
-        // 1. Họ và tên thí sinh + Nam, nữ (tách 2 regex độc lập, không phụ
-        // thuộc việc chúng có nằm cùng dòng hay không - xem giải thích chi
-        // tiết trong lịch sử sửa trước đó).
-        if (preg_match('/Họ và tên thí sinh[:\s]+([^\n]+?)(?=[ \t]{2,}Nam,?\s*nữ|\n|$)/iu', $text, $m)) {
-            $result = array_merge($result, $this->splitFullName(trim($m[1])));
-        }
-        if (preg_match('/Nam,?\s*nữ[:\s]+(Nam|N[ữu])/iu', $text, $m)) {
-            $result['gender'] = mb_strtolower($m[1], 'UTF-8') === 'nam' ? 'Nam' : 'Nữ';
+        // 1. Họ và tên thí sinh
+        if (preg_match(
+            '/Họ và tên thí sinh[:\s]+(.+?)(?=\s*(?:Nam,?\s*nữ|Giới\s*tính)\s*[:\-]|\n|$)/iu',
+            $text,
+            $m
+        )) {
+            $result = array_merge(
+                $result,
+                $this->splitFullName(trim($m[1]))
+            );
         }
 
-        // 2. Ngành đăng ký xét tuyển
-        if (preg_match('/Ngành đăng ký xét tuyển[:\s]+([^\n]+)/iu', $text, $m)) {
-            $result['major_name'] = trim(rtrim(trim($m[1]), '.'));
+        // 2. Giới tính
+        if (preg_match(
+            '/(?:Nam,?\s*nữ|Giới\s*tính)\s*[:\-]?\s*(Nam|Nữ)/iu',
+            $text,
+            $m
+        )) {
+            $result['gender'] =
+                mb_strtolower($m[1], 'UTF-8') === 'nam'
+                    ? 'Nam'
+                    : 'Nữ';
+        }
+
+        // 2. Ngành đăng ký xét tuyển / dự tuyển
+        // Dùng fuzzyMatch để khoan dung OCR sai dấu, và chấp nhận cả 2 cách
+        // diễn đạt "xét tuyển" (form thường/từ xa) lẫn "dự tuyển" (form Văn bằng 2).
+        if ($fm = $this->fuzzyMatch($text, '/nganh\s*dang\s*ky\s*(?:xet|du)\s*tuyen[:\s]+([^\n]+)/u')) {
+            $major = trim(rtrim(trim($fm[1]), '.'));
+
+            // Cắt bỏ cụm "Văn bằng 2" / "Văn bằng hai" ở đầu nếu có — đây là
+            // LOẠI HÌNH đào tạo (tên mẫu phiếu), không phải tên ngành thật.
+            // Ngành thật là phần còn lại phía sau, vd:
+            // "Văn bằng 2 Ngôn Ngữ Anh" -> "Ngôn Ngữ Anh"
+            $major = preg_replace('/^văn\s*bằng\s*(2|hai|ii)\s+/iu', '', $major);
+
+            $result['major_name'] = trim($major);
         }
 
         // 3. Ngày sinh / Nơi sinh / Dân tộc
         if (preg_match('/(\d{1,2}\/\d{1,2}\/\d{4})/', $text, $m)) {
             $result['birth_date'] = $this->toDbDate($m[1]);
         }
-        if (preg_match('/Nơi sinh[^\n]*?[:\s][ \t]*([^\n]+?)[ \t]{2,}Dân\s*tộc/iu', $text, $m)) {
-            $rawPlaceOfBirth = trim($m[1]);
+        // FIX: bản trước đòi hỏi >= 2 khoảng trắng liên tiếp ngay trước "Dân
+        // tộc" ([ \t]{2,}) — giả định sai rằng layout luôn có khoảng cách rộng
+        // kiểu bảng biểu. Thực tế nhiều form/OCR chỉ ra ĐÚNG 1 khoảng trắng
+        // đơn giữa các trường trên cùng 1 dòng (vd: "...An Giang Dân tộc:
+        // Kinh"), khiến regex không bao giờ khớp và place_of_birth luôn rỗng
+        // mà không báo lỗi gì.
+        //
+        // Đồng thời chuyển sang fuzzyMatch() để khoan dung lỗi dấu của chính
+        // nhãn "Nơi sinh" / "Dân tộc" (vd OCR đọc thành "Noi sinh", "Dan tôc"),
+        // và xử lý tường minh cụm chú thích "(ghi tỉnh)" hay chen giữa nhãn và
+        // dấu ":".
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/noi\s*sinh\s*(?:\([^)]*\))?\s*[:\s]+\s*([^\n]+?)\s*dan\s*toc/u'
+        )) {
+            $rawPlaceOfBirth = trim($fm[1]);
+
+            $province = \App\Services\ProvinceMergeMapper::extractProvinceFromText(
+                $rawPlaceOfBirth
+            );
+
+            if ($province) {
+                $result['place_of_birth'] = $province;
+            }
+        } elseif ($fm = $this->fuzzyMatch(
+            // Fallback: một số form không có nhãn "Dân tộc" ngay sau, hoặc OCR
+            // làm mất hẳn nhãn đó trên cùng dòng — khi ấy chỉ cắt tới cuối dòng.
+            $text,
+            '/noi\s*sinh\s*(?:\([^)]*\))?\s*[:\s]+\s*([^\n]+)/u'
+        )) {
+            $rawPlaceOfBirth = trim($fm[1]);
 
             $province = \App\Services\ProvinceMergeMapper::extractProvinceFromText(
                 $rawPlaceOfBirth
@@ -131,9 +188,10 @@ class AdmissionFormExtractor extends BaseExtractor
             $result['id_number'] = $m[1];
         }
 
-        // 5. Hộ khẩu thường trú
-        if (preg_match('/Hộ khẩu thường trú[:\s]+([^\n]+)/iu', $text, $m)) {
-            $address = trim(rtrim(trim($m[1]), '.'));
+        // 5. Hộ khẩu thường trú (dùng fuzzyMatch vì OCR hay đọc sai dấu:
+        // "khẩu" -> "khầu")
+        if ($fm = $this->fuzzyMatch($text, '/ho\s*khau\s*thuong\s*tru[:\s]+([^\n]+)/u')) {
+            $address = trim(rtrim(trim($fm[1]), '.'));
             $result['permanent_address'] = $address;
             $result = array_merge($result, $this->splitAddress($address));
         }
