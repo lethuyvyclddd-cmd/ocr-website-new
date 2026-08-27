@@ -121,35 +121,85 @@ class AdmissionFormExtractor extends BaseExtractor
         }
 
         // 2. Ngành đăng ký xét tuyển / dự tuyển
-        // Dùng fuzzyMatch để khoan dung OCR sai dấu, và chấp nhận cả 2 cách
-        // diễn đạt "xét tuyển" (form thường/từ xa) lẫn "dự tuyển" (form Văn bằng 2).
-        if ($fm = $this->fuzzyMatch($text, '/nganh\s*dang\s*ky\s*(?:xet|du)\s*tuyen[:\s]+([^\n]+)/u')) {
+        //
+        // FIX (bug "Tên Ngành" = "3. Họ và tên thí sinh: ..."):
+        //
+        // Pattern CŨ dùng "[:\s]+" làm phần phân cách ngay sau nhãn. Vì
+        // "\s" trong PCRE khớp CẢ ký tự xuống dòng (\n), nên khi thí sinh
+        // ĐỂ TRỐNG mục này (chỉ có nhãn, không có giá trị — case thực tế
+        // của phiếu "Văn bằng 2": dòng "2. Ngành đăng ký dự tuyển:" rồi
+        // xuống dòng ngay, ngành thật được ghi ở mục 10 "Ngành tốt
+        // nghiệp"), regex "nuốt" luôn dấu ":" + ký tự xuống dòng, rồi lấy
+        // NHẦM TOÀN BỘ dòng câu hỏi KẾ TIẾP ("3. Họ và tên thí sinh: CHU
+        // THị HồNG Hảo") làm tên ngành.
+        //
+        // FIX: đổi phần phân cách sang chỉ chấp nhận khoảng trắng NGANG
+        // (space/tab) + dấu ":" — KHÔNG cho khớp "\n" — để giá trị bắt
+        // buộc phải nằm CÙNG DÒNG với nhãn, không bao giờ tràn sang dòng
+        // sau. Đồng thời validate kết quả: bỏ qua nếu rỗng (mục để trống
+        // — hợp lệ, không gán gì cả) hoặc trông giống 1 câu hỏi khác (đề
+        // phòng các biến thể OCR/layout khác vẫn có thể lộ giá trị sai
+        // dòng theo cách khác).
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/nganh\s*dang\s*ky\s*(?:xet|du)\s*tuyen\s*:?[ \t]*([^\n]*)/u'
+        )) {
             $major = trim(rtrim(trim($fm[1]), '.'));
+
+            // FIX (bug "Tên Ngành" = "ngành Luật" thay vì "Luật"):
+            //
+            // OCR đôi khi lặp lại chữ "ngành" ngay đầu giá trị, vì bản
+            // thân câu hỏi cũng chứa từ đó (vd: "Ngành đăng ký xét tuyển:
+            // ngành Luật"). Nhãn của ta chỉ nuốt tới dấu ":" nên phần rác
+            // "ngành " lặp lại vẫn còn dính lại trong giá trị capture
+            // được. Cắt bỏ tiền tố này TRƯỚC khi cắt "Văn bằng 2" (2 bước
+            // độc lập, không loại trừ lẫn nhau).
+            $major = trim(preg_replace('/^ng[àa]nh\s+/iu', '', $major));
 
             // Cắt bỏ cụm "Văn bằng 2" / "Văn bằng hai" ở đầu nếu có — đây là
             // LOẠI HÌNH đào tạo (tên mẫu phiếu), không phải tên ngành thật.
             // Ngành thật là phần còn lại phía sau, vd:
             // "Văn bằng 2 Ngôn Ngữ Anh" -> "Ngôn Ngữ Anh"
-            $major = preg_replace('/^văn\s*bằng\s*(2|hai|ii)\s+/iu', '', $major);
+            $major = trim(preg_replace('/^văn\s*bằng\s*(2|hai|ii)\s+/iu', '', $major));
 
-            $result['major_name'] = trim($major);
+            $normMajor = $this->normalize($major);
+
+            // Ứng viên KHÔNG hợp lệ nếu: rỗng (mục để trống), hoặc bắt
+            // đầu bằng số thứ tự câu hỏi kiểu "3.", hoặc chứa nhãn của
+            // các câu hỏi khác (dấu hiệu bị lấy nhầm dòng).
+            $looksLikeAnotherQuestion =
+                $major === ''
+                || preg_match('/^\d+\s*[\.\)]/', $major)
+                || str_contains($normMajor, 'ho va ten')
+                || str_contains($normMajor, 'gioi tinh')
+                || str_contains($normMajor, 'ngay thang nam sinh')
+                || str_contains($normMajor, 'noi sinh');
+
+            if (! $looksLikeAnotherQuestion) {
+                $result['major_name'] = $major;
+            }
         }
 
         // 3. Ngày sinh / Nơi sinh / Dân tộc
         if (preg_match('/(\d{1,2}\/\d{1,2}\/\d{4})/', $text, $m)) {
             $result['birth_date'] = $this->toDbDate($m[1]);
         }
-        // FIX: bản trước đòi hỏi >= 2 khoảng trắng liên tiếp ngay trước "Dân
-        // tộc" ([ \t]{2,}) — giả định sai rằng layout luôn có khoảng cách rộng
-        // kiểu bảng biểu. Thực tế nhiều form/OCR chỉ ra ĐÚNG 1 khoảng trắng
-        // đơn giữa các trường trên cùng 1 dòng (vd: "...An Giang Dân tộc:
-        // Kinh"), khiến regex không bao giờ khớp và place_of_birth luôn rỗng
-        // mà không báo lỗi gì.
+
+        // FIX (bug "Nơi sinh" luôn rỗng): pattern CŨ đòi hỏi ÍT NHẤT 2
+        // khoảng trắng liên tiếp ([ \t]{2,}) ngay trước "Dân tộc" — giả
+        // định sai rằng layout luôn có khoảng cách rộng kiểu bảng biểu.
+        // Thực tế nhiều form/OCR chỉ ra ĐÚNG 1 khoảng trắng đơn giữa các
+        // trường trên cùng 1 dòng (vd: "...An Giang Dân tộc: Kinh"),
+        // khiến regex không bao giờ khớp và place_of_birth luôn rỗng mà
+        // không báo lỗi gì.
         //
-        // Đồng thời chuyển sang fuzzyMatch() để khoan dung lỗi dấu của chính
-        // nhãn "Nơi sinh" / "Dân tộc" (vd OCR đọc thành "Noi sinh", "Dan tôc"),
-        // và xử lý tường minh cụm chú thích "(ghi tỉnh)" hay chen giữa nhãn và
-        // dấu ":".
+        // FIX: chuyển sang fuzzyMatch() để khoan dung lỗi dấu của chính
+        // nhãn "Nơi sinh" / "Dân tộc" (OCR có thể đọc thành "Noi sinh",
+        // "Dan tôc"...), xử lý tường minh cụm chú thích "(ghi tỉnh)" hay
+        // chen giữa nhãn và dấu ":", và chỉ cần >= 1 khoảng trắng trước
+        // "Dân tộc" thay vì >= 2. Có thêm fallback khi không tìm thấy
+        // nhãn "Dân tộc" ngay sau (một số form/OCR có thể làm mất hẳn
+        // nhãn đó).
         if ($fm = $this->fuzzyMatch(
             $text,
             '/noi\s*sinh\s*(?:\([^)]*\))?\s*[:\s]+\s*([^\n]+?)\s*dan\s*toc/u'
@@ -164,8 +214,6 @@ class AdmissionFormExtractor extends BaseExtractor
                 $result['place_of_birth'] = $province;
             }
         } elseif ($fm = $this->fuzzyMatch(
-            // Fallback: một số form không có nhãn "Dân tộc" ngay sau, hoặc OCR
-            // làm mất hẳn nhãn đó trên cùng dòng — khi ấy chỉ cắt tới cuối dòng.
             $text,
             '/noi\s*sinh\s*(?:\([^)]*\))?\s*[:\s]+\s*([^\n]+)/u'
         )) {
@@ -179,6 +227,7 @@ class AdmissionFormExtractor extends BaseExtractor
                 $result['place_of_birth'] = $province;
             }
         }
+
         if (preg_match('/Dân\s*tộc[:\s]+([^\s\n]+)/iu', $text, $m)) {
             $result['ethnic'] = trim(rtrim(trim($m[1]), '.'));
         }
@@ -190,16 +239,73 @@ class AdmissionFormExtractor extends BaseExtractor
 
         // 5. Hộ khẩu thường trú (dùng fuzzyMatch vì OCR hay đọc sai dấu:
         // "khẩu" -> "khầu")
-        if ($fm = $this->fuzzyMatch($text, '/ho\s*khau\s*thuong\s*tru[:\s]+([^\n]+)/u')) {
+        //
+        // FIX (bug "Địa Chỉ Thường trú" dính rác kiểu ". man 191.71..."):
+        // Pattern CŨ dùng "[:\s]+" làm phần phân cách ngay sau nhãn — class
+        // này CHỈ chứa dấu ":" và khoảng trắng. Nếu ngay sau dấu ":" mà
+        // OCR chèn thêm ký tự rác không phải khoảng trắng (vd dấu chấm
+        // "." do đọc nhầm 1 ký hiệu/gạch đầu dòng viết tay), regex dừng
+        // khớp NGAY TẠI đó và bắt đầu capture từ chính ký tự rác đó, kéo
+        // theo toàn bộ phần rác vào giá trị địa chỉ.
+        //
+        // FIX: mở rộng phần phân cách để cũng nuốt luôn các ký tự rác phổ
+        // biến hay xuất hiện ngay sau dấu ":" do OCR (., -, •, *, khoảng
+        // trắng), giúp giá trị capture bắt đầu đúng từ nội dung địa chỉ
+        // thật thay vì từ ký tự rác.
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/ho\s*khau\s*thuong\s*tru\s*:?[\s\.\-•\*]*([^\n]+)/u'
+        )) {
             $address = trim(rtrim(trim($fm[1]), '.'));
             $result['permanent_address'] = $address;
             $result = array_merge($result, $this->splitAddress($address));
         }
 
         // 6. Trường/Tỉnh THPT (dòng năm lớp 12)
-        if (preg_match('/Năm lớp 12[:\s]+([^\n]+?)[ \t]+Tỉnh\s*\/\s*TP[:\s]+([^\n]+)/iu', $text, $m)) {
-            $result['highschool_name'] = trim($m[1]);
-            $result['highschool_province_name'] = trim(rtrim(trim($m[2]), '.'));
+        //
+        // FIX (bug "Tên Trường THPT" / "Tên Tỉnh THPT" luôn rỗng): pattern
+        // CŨ bắt buộc phải có cụm "Tỉnh/TP" nằm ngay trên CÙNG DÒNG với
+        // "Năm lớp 12", nếu không khớp thì KHÔNG gán gì cả — kể cả tên
+        // trường. Thực tế nhiều phiếu (như phiếu Văn bằng 2) chỉ ghi tên
+        // trường ở dòng lớp 12 mà không lặp lại "Tỉnh/TP" ngay sau (khác
+        // với dòng lớp 10/11), khiến cả 2 field bị bỏ trống oan dù tên
+        // trường vẫn đọc được.
+        //
+        // FIX: tách thành 2 bước độc lập — luôn lấy tên trường nếu có
+        // dòng "Năm lớp 12", và CHỈ gán thêm tỉnh nếu tìm thấy nhãn
+        // "Tỉnh/TP" theo sau (không bắt buộc phải cùng dòng).
+        // Bắt buộc dòng phải chứa "Trường" phía sau để không dính nhầm dòng
+        // "Kết quả học tập năm lớp 12: Học lực..."
+        //
+        // FIX 2 (bug "Tên Trường THPT" dính luôn phần "Tỉnh/TP..."):
+        // capture CŨ ([^\n]+) tham lam, ăn hết tới cuối dòng — nếu cùng
+        // dòng có cả tên trường lẫn "Tỉnh/TP..." (case phổ biến, vd:
+        // "Trường THPT Nguyễn Đình Chiều Tỉnh/TP.Vĩnh Long (Bến Tre Cũ)")
+        // thì tên trường bị dính luôn phần tỉnh vào sau. Đổi capture
+        // thành không tham lam và dừng lại TRƯỚC cụm "Tỉnh/TP" nếu có mặt
+        // trên cùng dòng, hoặc tới hết dòng nếu không có.
+        if (preg_match(
+            '/Năm\s*lớp\s*12[:\.\s]+(?=[^\n]*Tr[ưu]ờng)([^\n]+?)(?=\s*T[ỉi]nh\s*\/\s*TP|\s*$)/iu',
+            $text,
+            $m
+        )) {
+            $result['highschool_name'] = trim(rtrim(trim($m[1]), '.'));
+        }
+
+        // Tỉnh THPT: hỗ trợ CẢ 2 trường hợp — cùng dòng (case thực tế của bạn)
+        // và khác dòng (layout cũ)
+        if (preg_match(
+            '/Năm\s*lớp\s*12[:\.\s]+[^\n]*?T[ỉi]nh\s*\/\s*TP[.:\s]*([^\n(]+)/iu',
+            $text,
+            $m
+        )) {
+            $result['highschool_province_name'] = trim(rtrim(trim($m[1]), '.'));
+        } elseif (preg_match(
+            '/Năm\s*lớp\s*12[:\.\s]+[^\n]+\n\s*T[ỉi]nh\s*\/\s*TP[.:\s]+([^\n]+)/iu',
+            $text,
+            $m
+        )) {
+            $result['highschool_province_name'] = trim(rtrim(trim($m[1]), '.'));
         }
 
         // 7. Năm tốt nghiệp THPT
@@ -208,9 +314,21 @@ class AdmissionFormExtractor extends BaseExtractor
         }
 
         // 8. Học lực / Hạnh kiểm lớp 12
-        if (preg_match('/Học lực[:\s]+([^\n]+?)[ \t]+Hạnh\s*kiểm[:\s]*([^\n]+)/iu', $text, $m)) {
-            $result['highschool_academic_rank'] = trim(rtrim(trim($m[1]), '.'));
-            $result['highschool_conduct_rank'] = trim(rtrim(trim($m[2]), '.'));
+        //
+        // FIX: tách riêng 2 field, không bắt buộc cùng dòng hay đúng thứ tự.
+        // Hạnh kiểm chỉ xuất hiện 1 lần duy nhất trên phiếu (dành cho THPT) nên
+        // tìm độc lập là an toàn.
+        if ($fm = $this->fuzzyMatch($text, '/hanh\s*kiem[:\s]+([^\n]+)/u')) {
+            $result['highschool_conduct_rank'] = trim(rtrim(trim($fm[1]), '.'));
+        }
+
+        // Học lực THPT: neo theo cụm "năm lớp 12" đứng trước nó để phân biệt với
+        // "Học lực" của bằng đại học (dòng "Trường cấp bằng ... Học lực" ở dưới).
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/nam\s*lop\s*12[^\n]*?hoc\s*luc[:\s]+([^\n]+)/u'
+        )) {
+            $result['highschool_academic_rank'] = trim(rtrim(trim($fm[1]), '.'));
         }
 
         // 9. Năm tốt nghiệp trung cấp/CĐ
@@ -232,10 +350,20 @@ class AdmissionFormExtractor extends BaseExtractor
         // trình độ từ đây trước, đồng thời tách trình độ ra khỏi tên ngành
         // (bản trước để lẫn "Trung cấp" vào $priorMajor luôn, làm bẩn tên
         // ngành).
+        //
+        // FIX (bug "Ghi Chú 2" mất tên ngành, ví dụ ra "Đại học" thay vì
+        // "Đại học Hệ thống điện"): pattern CŨ dùng "[:\s]+" làm phân cách
+        // ngay sau nhãn — chỉ chấp nhận dấu ":" hoặc khoảng trắng. OCR
+        // thực tế có thể ghi nhãn bằng dấu PHẨY thay vì hai chấm (vd:
+        // "9 Năm tốt nghiệp trung cấp, cao đảng 2016 Ngành tốt nghiệp,
+        // Hệ thống điện"), khiến regex không khớp được gì, $priorMajor
+        // luôn null dù tên ngành vẫn đọc được ngay đó.
+        //
+        // FIX: thêm dấu "," vào class phân cách.
         $priorMajor = null;
         $level = null;
 
-        if ($fm = $this->fuzzyMatch($text, '/nganh\s*tot\s*nghiep[:\s]+([^\n]+)/u')) {
+        if ($fm = $this->fuzzyMatch($text, '/nganh\s*tot\s*nghiep[:\s,]+([^\n]+)/u')) {
             $rawAfterLabel = trim(rtrim(trim($fm[1]), '.'));
 
             if (preg_match('/^(Trung\s*c[aấáàảãạăằắặẳẵâầấậẩẫ]p|Cao\s*đ[aăâeêuư]ng|Đ[aạ]i\s*h[oọ]c)\s+(.+)$/iu', $rawAfterLabel, $mm)) {
@@ -244,6 +372,26 @@ class AdmissionFormExtractor extends BaseExtractor
             } else {
                 $priorMajor = $rawAfterLabel;
             }
+        }
+
+        // ===== THÊM MỚI: ưu tiên lấy trình độ từ nhãn "Trường cấp bằng" =====
+        //
+        // Lý do đặt Ở ĐÂY (trước Fallback 1 và Fallback 2):
+        //
+        // "Trường cấp bằng: Đại học Bách Khoa TPHCM" là câu TRẢ LỜI thật
+        // của thí sinh, đáng tin hơn nhiều so với việc quét mù toàn văn
+        // bản (Fallback 2) — vì phiếu luôn có câu HỎI chứa sẵn cả 3 từ
+        // "trung cấp/cao đẳng/đại học" ở mục 9 (vd: "Năm tốt nghiệp trung
+        // cấp, cao đẳng..."), khiến Fallback 2 dễ bắt nhầm ngay từ đầu.
+        //
+        // Chỉ chạy khi bước trên (nhãn "Ngành tốt nghiệp") chưa xác định
+        // được $level, và luôn chạy TRƯỚC Fallback 1/2 để chặn không cho
+        // 2 fallback kém tin cậy hơn có cơ hội gán sai trước.
+        if (! $level && $fm = $this->fuzzyMatch(
+            $text,
+            '/truong\s*cap\s*bang[:\s]+(trung\s*cap|cao\s*dang|dai\s*hoc)/u'
+        )) {
+            $level = $this->normalizeLevel($fm[1]);
         }
 
         // Fallback 1: dấu tích ở 1 trong 3 dòng checkbox "Trung cấp / Cao
@@ -297,9 +445,16 @@ class AdmissionFormExtractor extends BaseExtractor
         }
 
         // Trường cấp bằng + Học lực (của bằng trung cấp/CĐ/ĐH trước đó)
-        if (preg_match('/Trường cấp bằng[:\s]+([^\n]+?)[ \t]+Học lực[:\s]+([^\n]+)/iu', $text, $m)) {
-            $result['university_name'] = trim($m[1]);
-            $result['classification'] = trim(rtrim(trim($m[2]), '.'));
+        // FIX: đổi sang fuzzyMatch (so khớp trên bản không dấu) để không bị vỡ
+        // khi OCR đọc rớt dấu "bằng" -> "băng" (2 chữ khác dấu nhưng cùng chuẩn
+        // hoá về "bang"). preg_match thường trước đây thất bại hoàn toàn khi
+        // gặp trường hợp này, làm mất cả university_name lẫn classification.
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/truong\s*cap\s*bang[:\s]+([^\n]+?)[ \t]+hoc\s*luc[:\s]+([^\n]+)/u'
+        )) {
+            $result['university_name'] = trim(rtrim(trim($fm[1]), '.'));
+            $result['classification'] = trim(rtrim(trim($fm[2]), '.'));
         }
 
         // Ghi chú 2 = Trình độ + Ngành tốt nghiệp (trước đó)
@@ -311,8 +466,19 @@ class AdmissionFormExtractor extends BaseExtractor
         if (preg_match('/ĐTDĐ của bản thân[:\s]+(\d[\d\s]*)/iu', $text, $m)) {
             $result['phone_1'] = preg_replace('/\D/', '', $m[1]);
         }
-        if (preg_match('/Điện thoại liên lạc của gia đ[ìi]nh[:\s]+(\d[\d\s]*)/iu', $text, $m)) {
-            $result['phone_2'] = preg_replace('/\D/', '', $m[1]);
+
+        // FIX (bug "Số Điện Thoại 2" luôn rỗng): pattern CŨ dùng preg_match()
+        // thường, đòi hỏi đúng chữ "liên lạc" có dấu chuẩn ("liên" với dấu
+        // sắc trên "ê"). OCR trên phiếu thật đọc thành "lien lạc" (mất dấu
+        // chữ "liên"), nên regex không bao giờ khớp, field bị bỏ trống.
+        //
+        // FIX: chuyển sang fuzzyMatch() để khoan dung lỗi dấu của cả cụm
+        // "liên lạc" và "gia đình".
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/dien\s*thoai\s*lien\s*lac\s*cua\s*gia\s*dinh[:\s]+(\d[\d\s]*)/u'
+        )) {
+            $result['phone_2'] = preg_replace('/\D/', '', $fm[1]);
         }
 
         return $result;
