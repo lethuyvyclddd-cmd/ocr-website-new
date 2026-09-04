@@ -54,6 +54,37 @@ Bỏ qua VietOCR cho trang không cần dùng (THÊM MỚI):
       rec_texts từ kết quả PaddleOCR (tuỳ phiên bản có thể đặt tên field
       khác), CỐ TÌNH fallback về chạy VietOCR cho MỌI trang như hành vi
       cũ — thà chậm còn hơn bỏ sót dữ liệu cần dùng do đoán sai.
+
+Đổi sang model nhẹ hơn cho PaddleOCR (THÊM MỚI - dựa trên log thực tế):
+    - Log thực tế cho thấy dòng "[TIME] PaddleOCR detect" KHÔNG hề cố
+      định dù luôn detect trên cùng 1 shape 960x960 cố định — nó tăng
+      gần như tỉ lệ thuận theo SỐ VÙNG CHỮ tìm được trong ảnh (34 vùng
+      -> 24.73s, 25 vùng -> 12.87s, 18 vùng -> 13.87s). Một bước detect
+      thuần (1 lần forward CNN trên 1 ảnh cố định shape) không có lý do
+      gì phải phụ thuộc vào số lượng chữ tìm thấy.
+    - Nguyên nhân: PaddleOCR(...) là 1 PIPELINE đầy đủ (detect + nhận
+      diện chữ), không có cách nào tắt bước nhận diện (rec) khi dùng
+      class PaddleOCR trực tiếp -> mỗi lần predict() đều tự chạy model
+      rec (mặc định "PP-OCRv6_medium_rec" cho lang="vi") cho TỪNG vùng
+      chữ vừa detect được, RỒI VỨT ĐI kết quả đó (VietOCR mới là thứ
+      thực sự dùng để đọc nội dung). Đây chính là phần thời gian "ẩn"
+      bị cộng dồn vào dòng log "[TIME] PaddleOCR detect".
+    - Fix bước 1 (áp dụng ở đây, rủi ro thấp, không đổi cấu trúc code):
+      đổi từ model "medium" (mặc định khi chỉ truyền lang="vi") sang
+      các bản nhẹ hơn trong CÙNG họ PP-OCRv6 (chỉ có 3 mức:
+      medium/small/tiny — KHÔNG có bản "mobile" như PP-OCRv5/v4/v3).
+      Dùng "small" cho detect (giữ độ nhạy phát hiện box tốt hơn) và
+      "tiny" cho rec (nhẹ nhất, vì kết quả rec này vẫn bị vứt đi, không
+      ảnh hưởng độ chính xác cuối cùng). Bước rec vẫn chạy nhưng nhẹ
+      hơn hẳn nên tổng thời gian giảm đáng kể.
+    - Fix triệt để hơn (KHÔNG áp dụng ở bản này, cần đổi API + test lại
+      field trả về): dùng module standalone paddleocr.TextDetection
+      thay cho class PaddleOCR đầy đủ, để bỏ hẳn model rec ra khỏi
+      luồng /ocr (ảnh đơn) — /ocr-pdf vẫn cần rec_texts để
+      classify_page_quick() hoạt động nên giữ nguyên PaddleOCR pipeline
+      cho luồng đó, hoặc chấp nhận mất tính năng skip trang (đã có sẵn
+      fallback an toàn: chạy VietOCR cho mọi trang nếu không đọc được
+      rec_texts).
 """
 
 import os
@@ -159,6 +190,28 @@ print("=" * 70)
 
 ocr_engine = PaddleOCR(
     lang="vi",
+
+    # SỬA (THÊM MỚI - xem giải thích ở docstring đầu file): chỉ định rõ
+    # model nhẹ hơn thay vì để PaddleOCR tự chọn model "medium" mặc
+    # định cho lang="vi". Class PaddleOCR luôn chạy CẢ detect lẫn rec
+    # bên trong predict() (không có cách tắt rec khi dùng class này) —
+    # mà bước rec ở đây hoàn toàn bị vứt bỏ kết quả (VietOCR mới là
+    # engine đọc nội dung thật). LƯU Ý: họ PP-OCRv6 chỉ có 3 mức
+    # medium/small/tiny, KHÔNG có "mobile" như PP-OCRv5/v4/v3 (dùng
+    # "mobile" sẽ lỗi UnknownModelError).
+    #
+    # - det: dùng "small" (không dùng "tiny") để giữ độ nhạy phát hiện
+    #   box tốt hơn — det ảnh hưởng trực tiếp đến việc có bắt được đủ
+    #   vùng chữ (vd "Nam"/"Nữ") hay không.
+    # - rec: dùng "tiny" (nhẹ nhất) vì kết quả rec này bị vứt đi ngay,
+    #   không ảnh hưởng độ chính xác cuối cùng (VietOCR mới là engine
+    #   đọc nội dung thật).
+    #
+    # Nếu sau khi test thấy độ chính xác detect bị ảnh hưởng (bỏ sót
+    # box), có thể đổi text_detection_model_name lại thành
+    # "PP-OCRv6_medium_det" (giữ nguyên rec là "tiny").
+    text_detection_model_name="PP-OCRv6_small_det",
+    text_recognition_model_name="PP-OCRv6_tiny_rec",
 
     # Không cần xoay từng dòng nếu giấy tờ đã tương đối thẳng
     use_textline_orientation=False,
