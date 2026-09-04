@@ -27,6 +27,73 @@ class DiplomaExtractor extends BaseExtractor
     }
 
     /**
+     * Kiểm tra 1 dòng có "hình dạng" của một cái tên người hay không:
+     * mỗi từ viết hoa chữ cái đầu, KHÔNG phải toàn bộ từ viết hoa (để loại
+     * các dòng tiêu đề/tên trường kiểu "TRƯỜNG ĐẠI HỌC BÁCH KHOA"), không có
+     * chữ số/dấu câu dính vào, và có 2-5 từ. Dùng để chặn việc các fallback
+     * dò tên (không có nhãn rõ ràng đi kèm) vô tình nhận nhầm câu văn tả
+     * bằng cấp (luôn viết thường hoặc dạng câu, không phải Title Case) làm
+     * tên người — thay vì phải liệt kê thủ công từng cụm từ nhiễu vào
+     * denylist (dễ sót case mới).
+     */
+    // FIX (bug họ tên ra "Hệ Thống Điện" — tên chuyên ngành thay vì tên
+    // người, case ảnh bằng Bách Khoa OCR "CHO TRẦN THÁI" toàn chữ HOA):
+    // trước đây looksLikeName() LUÔN từ chối từ viết toàn HOA (để loại các
+    // dòng tiêu đề/tên trường như "TRƯỜNG ĐẠI HỌC BÁCH KHOA"). Nhưng chữ ký
+    // tên người theo font chữ thảo trên một số phôi bằng lại hay bị VietOCR
+    // đọc nhầm thành TOÀN CHỮ HOA (vd "Trần Thái" -> "TRẦN THÁI"), khiến
+    // khối xử lý nhãn "Cho:" (đã có nhãn thật đứng ngay trước, rủi ro nhận
+    // nhầm thấp) từ chối luôn tên hợp lệ, rồi rơi xuống fallback dò mù
+    // ("Upon:") và vô tình nhận nhầm dòng tên chuyên ngành liền kề (cũng
+    // tình cờ có hình dạng Title Case 2-3 từ) làm tên người.
+    //
+    // Thêm tham số $allowAllCaps: khi true, KHÔNG áp dụng luật "cả từ
+    // không được toàn chữ hoa" nữa — chỉ dùng ở nơi đã có nhãn thật đứng
+    // trước (khối "Cho:"). Các fallback dò mù (không có nhãn rõ ràng, như
+    // "Upon:") vẫn giữ mặc định false để tránh nhận nhầm tên
+    // trường/ngành/tiêu đề (đều thường in hoa).
+    private function looksLikeName(string $line, bool $allowAllCaps = false): bool
+    {
+        $line = trim($line, " \t:.-");
+        $words = preg_split('/\s+/u', $line, -1, PREG_SPLIT_NO_EMPTY);
+
+        if ($words === false || count($words) < 2 || count($words) > 5) {
+            return false;
+        }
+
+        foreach ($words as $word) {
+            // FIX: tên người thật không bao giờ chứa dấu gạch nối "-" ở
+            // giữa. Việc bỏ qua token "-" trước đây vô tình khiến các dòng
+            // kiểu "Kỹ thuật Điện - Điện tử" (tên ngành/chuyên ngành) pass
+            // được looksLikeName() vì mỗi từ còn lại đều Title Case. Đã bỏ
+            // hẳn nhánh continue đặc cách cho "-" — preg_match bên dưới tự
+            // động loại nó vì "-" không thuộc \p{L}.
+            if (preg_match('/[^\p{L}]/u', $word)) {
+                return false;
+            }
+
+            if (mb_strlen($word, 'UTF-8') < 2) {
+                return false;
+            }
+
+            $firstChar = mb_substr($word, 0, 1, 'UTF-8');
+
+            // Chữ đầu phải viết hoa.
+            if ($firstChar !== mb_strtoupper($firstChar, 'UTF-8')) {
+                return false;
+            }
+
+            // Cả từ KHÔNG được toàn chữ hoa (loại "TRƯỜNG", "BÁCH", "KHOA"...),
+            // TRỪ KHI $allowAllCaps = true (xem giải thích ở docblock trên).
+            if (!$allowAllCaps && $word === mb_strtoupper($word, 'UTF-8')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * ========================================================================
      * HƯỚNG #1: CHUẨN HOÁ TRƯỚC KHI SO KHỚP (fix hệ thống)
      * ========================================================================
@@ -137,6 +204,30 @@ class DiplomaExtractor extends BaseExtractor
                 $rawName = trim($mm[2]);
             }
 
+            // FIX (bug Họ ra ", Ortober 20/2818041 Học" / Tên ra "Tr."):
+            // \bCho\b khớp bất kỳ từ "Cho" đứng lẻ nào trong TOÀN VĂN BẢN,
+            // không chỉ đúng nhãn "Cho:" thật. Case thực tế: dòng ngày ký
+            // "Ho Chi Minh City, October 26/2018..." bị OCR đọc sai chữ
+            // "City," thành "Cho," (rất giống hình dạng chữ), regex vẫn
+            // khớp \bCho\b hợp lệ (đứng sau khoảng trắng, trước dấu phẩy)
+            // rồi nuốt luôn phần còn lại của dòng (chứa "Ortober", số,
+            // v.v.) làm "tên". Khối này chạy ĐẦU TIÊN, trước mọi fallback
+            // có looksLikeName()/denylist, nên bug lọt thẳng qua.
+            //
+            // Bắt buộc rawName phải THỰC SỰ có hình dạng tên người (qua
+            // looksLikeName - Title Case, không số, không dấu câu dính
+            // vào) trước khi chấp nhận. Nếu không hợp lệ, bỏ qua kết quả
+            // này (để trống last_name/first_name) — các fallback phía
+            // dưới (dò nhãn "ho"/"cho" chuẩn hoá, hoặc neo theo "Upon:")
+            // sẽ tự động chạy tiếp và tìm đúng tên thật.
+            // FIX MỚI: cho phép rawName toàn chữ HOA ở đây ($allowAllCaps =
+            // true) — vì đã có nhãn "Cho:" thật đứng ngay trước nên rủi ro
+            // nhận nhầm thấp hơn hẳn so với các fallback dò mù phía dưới.
+            // Xem giải thích chi tiết trong docblock của looksLikeName().
+            if ($rawName !== '' && (preg_match('/\d/', $rawName) || !$this->looksLikeName($rawName, true))) {
+                $rawName = '';
+            }
+
             if ($rawName !== '') {
                 $result = array_merge($result, $this->splitFullName($rawName));
             }
@@ -216,16 +307,75 @@ class DiplomaExtractor extends BaseExtractor
         // cùng cặp với dòng tên tiếng Việt trên bằng song ngữ) rồi lấy dòng
         // tiếng Việt tương ứng ngay sau/trước nó.
         if (empty($result['last_name']) && empty($result['first_name'])) {
+            // FIX (bug Họ ra "VIET NAM NATIONAL UNIVERSITY..." / "has
+            // conferred the degree of"): pattern anchor bên dưới CHỈ kiểm
+            // tra hình dạng ký tự (chữ thường, không dấu câu) chứ không
+            // phân biệt được dòng "upon ..." thật với các dòng tiêu đề
+            // trường/quốc hiệu hay câu boilerplate khác của văn bằng cũng
+            // tình cờ toàn chữ thường sau khi chuẩn hoá (vd "ĐẠI HỌC QUỐC
+            // GIA THÀNH PHỐ HỒ CHÍ MINH" -> "dai hoc quoc gia...", hay
+            // "cấp bằng" -> "cap bang"). Khi dòng "Upon:" thật bị hỏng (có
+            // dấu ":" ở giữa khiến regex không khớp), code lại vô tình
+            // nhận nhầm 1 trong các dòng này làm anchor, rồi lấy luôn dòng
+            // liền kề làm họ tên dù không phải tên người.
+            //
+            // 3 lớp phòng vệ:
+            // - Bóc dấu câu ra khỏi bản dùng để TEST anchor ($anchorProbe),
+            //   để không còn phụ thuộc việc OCR có chèn ":" sau "Upon" hay
+            //   không (FIX MỚI — xem giải thích chi tiết bên dưới).
+            // - Loại các từ khoá tiêu đề trường/quốc hiệu khỏi cả anchor
+            //   lẫn candidate.
+            // - Bắt buộc candidate phải THỰC SỰ có hình dạng tên người
+            //   (Title Case, không toàn chữ hoa, không số, không dấu câu)
+            //   qua looksLikeName - tổng quát hơn nhiều so với liệt kê thủ
+            //   công từng câu boilerplate mới phát sinh.
+            $institutionNoise = [
+                'dai hoc', 'cao dang', 'trung cap', 'hoc vien', 'truong',
+                'quoc gia', 'university', 'cong hoa', 'doc lap', 'chu nghia',
+                'xa hoi',
+            ];
+
             foreach ($lines as $i => $line) {
                 $normLine = trim($this->normalize($line), " \t:.-");
 
-                // Dòng dạng "aron Nguyen Huu Dat" / "upon Nguyen Huu Dat" —
-                // OCR có thể làm rớt/méo chữ "UPON" (ví dụ ra "aron"), nhưng
-                // luôn có ít nhất 1 dòng KHÔNG DẤU chứa họ tên viết thường sau
-                // khi chuẩn hoá, đi kèm 1 dòng CÓ DẤU tương ứng liền kề.
-                if (preg_match('/^[a-z]{2,6}\s+[a-z\s]{4,40}$/u', $normLine)
+                $anchorIsInstitutionNoise = false;
+                foreach ($institutionNoise as $bad) {
+                    if (str_contains($normLine, $bad)) {
+                        $anchorIsInstitutionNoise = true;
+                        break;
+                    }
+                }
+
+                // FIX (bug mất tên hoàn toàn khi dòng "Upon" dính dấu ":"):
+                // regex cũ '/^[a-z]{2,6}\s+[a-z\s]{4,40}$/u' đòi hỏi ngay
+                // sau 2-6 ký tự đầu phải là KHOẢNG TRẮNG. Nhưng dòng thực tế
+                // "Upon: Nguyen Van Tuyen" sau normalize() ra
+                // "upon: nguyen van tuyen" — ký tự ngay sau "upon" là dấu
+                // ":" chứ không phải khoảng trắng, nên regex KHÔNG BAO GIỜ
+                // khớp được. Hậu quả: anchor không bao giờ tìm thấy, vòng
+                // lặp bỏ qua toàn bộ tài liệu, dù dòng tên tiếng Việt liền
+                // kề vẫn đọc đúng 100% — field Họ/Tên bị bỏ trống hoàn toàn
+                // một cách im lặng.
+                //
+                // Sửa: tạo riêng $anchorProbe = bỏ hết ký tự không phải
+                // chữ cái thường/khoảng trắng khỏi $normLine (KHÔNG đụng gì
+                // tới $normLine gốc, vì $normLine vẫn cần dùng nguyên vẹn
+                // cho các str_contains($institutionNoise) ở trên và
+                // str_contains('born')/('nam') ở dưới). Chỉ dùng
+                // $anchorProbe để TEST hình dạng anchor, nhờ vậy anchor được
+                // nhận diện đúng bất kể OCR có chèn ":" / "." / khoảng trắng
+                // thừa ở đâu sau "Upon"/"UPON" hay không.
+                // FIX (bug mất tên khi dòng "Upon" dính dấu ":"), fix ĐÚNG chỗ, không
+                // strip toàn bộ dấu câu (tránh xoá luôn dấu "-" vốn đang bảo vệ các dòng
+                // như "Kỹ thuật Điện - Điện tử" / "Electrical - Electronics Engineering"
+                // khỏi bị nhận nhầm làm anchor). Chỉ nới lỏng ĐÚNG vị trí gây lỗi: cho
+                // phép 1 dấu ":" hoặc "." tuỳ chọn ngay sau từ đầu (2-6 ký tự), trước khi
+                // bắt buộc có khoảng trắng.
+                if (preg_match('/^[a-z]{2,6}[:.]?\s+[a-z\s]{4,40}$/u', $normLine)
                     && !str_contains($normLine, 'born')
                     && !str_contains($normLine, 'nam')
+                    && !$anchorIsInstitutionNoise
+
                 ) {
                     foreach ([$i - 1, $i + 1] as $nearbyIndex) {
                         if (!isset($lines[$nearbyIndex])) {
@@ -238,10 +388,29 @@ class DiplomaExtractor extends BaseExtractor
                         $isNoise = preg_match('/\d/', $candidate)
                             || mb_strlen($candidate, 'UTF-8') < 4
                             || mb_strlen($candidate, 'UTF-8') > 50
+                            || str_contains($candidate, ':')
+                            || str_contains($normCandidate, 'upon')
                             || str_contains($normCandidate, 'bang')
                             || str_contains($normCandidate, 'ky su')
                             || str_contains($normCandidate, 'cap')
-                            || str_contains($normCandidate, 'may tinh');
+                            || str_contains($normCandidate, 'may tinh')
+                            // NEW: candidate phải có dấu tiếng Việt — chặn hẳn khả năng chọn
+                            // nhầm cụm tiếng Anh Title Case (vd "Electrical Electronics
+                            // Engineering") làm tên người trong nhánh chuyên xử lý cặp Anh-Việt.
+                            || $candidate === $this->stripDiacritics($candidate);
+
+                        if (!$isNoise) {
+                            foreach ($institutionNoise as $bad) {
+                                if (str_contains($normCandidate, $bad)) {
+                                    $isNoise = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!$isNoise && !$this->looksLikeName($candidate)) {
+                            $isNoise = true;
+                        }
 
                         if (!$isNoise) {
                             $result = array_merge($result, $this->splitFullName($candidate));
@@ -252,7 +421,7 @@ class DiplomaExtractor extends BaseExtractor
             }
         }
 
-                // ===== Ngày sinh =====
+        // ===== Ngày sinh =====
         if (preg_match('/Ng[àa]y\s*sinh[:\s]+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/iu', $text, $m)) {
             $result['birth_date'] = $this->toDbDate($m[1]);
         } elseif (preg_match(
@@ -363,10 +532,27 @@ class DiplomaExtractor extends BaseExtractor
         // FIX: bản trước THIẾU "trung cấp" — với bằng Trung cấp (vd:
         // "TRƯỜNG TRUNG CẤP NGHỀ ...") thì university_name luôn bị bỏ trống
         // vì tên trường không chứa "đại học/cao đẳng/học viện/nhạc viện".
+        // FIX (bug tên trường ra "ĐẠI HỌC QUỐC GIA THÀNH PHỐ HỒ CHÍ MINH"):
+        // pattern cũ cho "truong" là TÙY CHỌN nên preg_match luôn ăn ngay
+        // cụm "đại học/..." ĐẦU TIÊN gặp trong text — trên bằng của các
+        // trường thành viên ĐHQG, dòng "ĐẠI HỌC QUỐC GIA..." (tên hệ thống
+        // MẸ) luôn đứng TRƯỚC dòng "TRƯỜNG ĐẠI HỌC ..." (tên trường THẬT)
+        // nên bị vớ nhầm. Giờ ưu tiên thử bản BẮT BUỘC có "Trường" đứng
+        // trước; chỉ khi không tìm thấy mới rơi về pattern cũ (cho các mẫu
+        // không có chữ "Trường" đứng trước, ví dụ bằng Trung cấp), và loại
+        // trừ tường minh "đại học quốc gia" khỏi bản dự phòng này.
         if ($fm = $this->fuzzyMatch(
             $text,
-            '/(?:truong\s+)?(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?|vien)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
+            '/truong\s+(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
         )) {
+            $result['university_name'] = $this->matchDictionary($fm[0], Universities::all());
+        } elseif (
+            ($fm = $this->fuzzyMatch(
+                $text,
+                '/(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?|vien)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
+            ))
+            && !str_contains($this->normalize($fm[0]), 'quoc gia')
+        ) {
             $result['university_name'] = $this->matchDictionary($fm[0], Universities::all());
         }
 
@@ -457,6 +643,13 @@ class DiplomaExtractor extends BaseExtractor
         }
 
         // ===== Ngành / chuyên ngành đào tạo =====
+        // QUAN TRỌNG: DiplomaExtractor KHÔNG ĐƯỢC gán vào
+        // $result['major_name'] ("Tên Ngành" trên hồ sơ). Field đó PHẢI
+        // lấy từ "Ngành xét tuyển" trên Phiếu đăng ký xét tuyển (do
+        // AdmissionFormExtractor xử lý) — ngành ghi trên bằng tốt nghiệp
+        // (có thể khác ngành lúc xét tuyển do chuyển ngành/song ngành...)
+        // chỉ được dùng để ghép vào Ghi chú 2 (xem cuối hàm extract()),
+        // TUYỆT ĐỐI không ghi đè lên field Tên Ngành chính.
         $major = null;
 
         if ($majorLabel = $this->afterLabelNormalized(
@@ -464,11 +657,7 @@ class DiplomaExtractor extends BaseExtractor
             ['Ngành đào tạo', 'Chuyên ngành', 'Ngành'],
             80
         )) {
-            $major = trim($majorLabel);
-            $result['major_name'] = DictionaryMatcher::match(
-                $major,
-                Majors::all()
-            );
+            $major = $this->matchDictionary(trim($majorLabel), Majors::all());
         } elseif ($fm = $this->fuzzyMatch(
             // HƯỚNG #1: "bang" (BẰNG) không dấu, khoan dung lỗi OCR trên
             // chính từ "BẰNG" đứng đầu dòng.
@@ -507,7 +696,16 @@ class DiplomaExtractor extends BaseExtractor
                 // ưu tiên dùng dòng tiếng Việt đó thay vì bản tiếng Anh.
                 $hasVietnameseDiacritics = $candidate !== $this->stripDiacritics($candidate);
 
-                if (!$hasVietnameseDiacritics) {
+                // FIX: tùy thứ tự box OCR trả về, ứng viên ban đầu ($candidate)
+                // đôi khi lại LÀ CHÍNH dòng "Kỹ sư"/"Cử nhân"... (đã có dấu
+                // tiếng Việt sẵn) — nếu chỉ check "không có dấu thì mới đi
+                // tìm tiếp" như trước, trường hợp này bị coi là "đã đúng" và
+                // bỏ qua luôn bước quét, dù đây vẫn là tên HỌC VỊ chứ không
+                // phải tên NGÀNH. Cần đi tìm tiếp trong cả trường hợp này.
+                $needsRecovery = !$hasVietnameseDiacritics
+                    || in_array($normCandidate, ['ky su', 'cu nhan', 'thac si', 'tien si'], true);
+
+                if ($needsRecovery) {
                     $candidateLineIndex = null;
                     foreach ($lines as $i => $line) {
                         if (trim($line) === trim($lineRaw)) {
@@ -516,35 +714,69 @@ class DiplomaExtractor extends BaseExtractor
                         }
                     }
 
-                    if ($candidateLineIndex !== null && isset($lines[$candidateLineIndex + 1])) {
-                        $nextLine = trim($lines[$candidateLineIndex + 1]);
-                        $nextNorm = $this->normalize($nextLine);
+                    // FIX: trước đây chỉ nhìn ĐÚNG 1 dòng kế tiếp — nếu dòng
+                    // đó là tên học vị ("Kỹ sư") thì bị chấp nhận nhầm luôn
+                    // (dòng ngành thật "Kỹ thuật Điện - Điện tử" nằm tận 2
+                    // dòng sau đó lại không bao giờ được xét tới). Giờ quét
+                    // vài dòng kế tiếp, BỎ QUA các dòng là tên học vị, để đi
+                    // tiếp tới đúng dòng tên ngành tiếng Việt thật sự.
+                    if ($candidateLineIndex !== null) {
+                        for ($offset = 1; $offset <= 4; $offset++) {
+                            $nextIndex = $candidateLineIndex + $offset;
 
-                        $nextIsViet = $nextLine !== $this->stripDiacritics($nextLine);
-                        $nextIsNoise = preg_match('/\d/', $nextLine)
-                            || mb_strlen($nextLine, 'UTF-8') < 3
-                            || mb_strlen($nextLine, 'UTF-8') > 60
-                            || str_contains($nextNorm, 'cho ')
-                            || str_contains($nextNorm, 'sinh ngay')
-                            || str_contains($nextNorm, 'nam sinh');
+                            if (!isset($lines[$nextIndex])) {
+                                break;
+                            }
 
-                        if ($nextIsViet && !$nextIsNoise) {
-                            $candidate = $nextLine;
-                            $normCandidate = $this->normalize($candidate);
+                            $nextLine = trim($lines[$nextIndex]);
+                            $nextNorm = $this->normalize($nextLine);
+
+                            // Tên học vị/văn bằng — không phải tên ngành,
+                            // bỏ qua và xét tiếp dòng sau đó.
+                            if (in_array($nextNorm, ['ky su', 'cu nhan', 'thac si', 'tien si'], true)) {
+                                continue;
+                            }
+
+                            $nextIsViet = $nextLine !== $this->stripDiacritics($nextLine);
+                            $nextIsNoise = preg_match('/\d/', $nextLine)
+                                || mb_strlen($nextLine, 'UTF-8') < 3
+                                || mb_strlen($nextLine, 'UTF-8') > 60
+                                || str_contains($nextNorm, 'cho ')
+                                || str_contains($nextNorm, 'sinh ngay')
+                                || str_contains($nextNorm, 'nam sinh');
+
+                            if ($nextIsNoise) {
+                                // Nhiễu thật sự (số, quá ngắn/dài, đã lấn
+                                // sang phần khác của văn bằng) — dừng hẳn,
+                                // giữ nguyên candidate đang có.
+                                break;
+                            }
+
+                            if ($nextIsViet) {
+                                // Dòng tiếng Việt hợp lệ — dùng luôn và dừng.
+                                $candidate = $nextLine;
+                                $normCandidate = $this->normalize($candidate);
+                                break;
+                            }
+
+                            // FIX: dòng tiếng Anh khác (vd tên ngành tiếng Anh
+                            // "Electrical - Electronics Engineering" đứng
+                            // ngay trước bản tiếng Việt của chính nó) — KHÔNG
+                            // dừng ở đây, tiếp tục quét dòng kế tiếp để tìm
+                            // đúng bản tiếng Việt song song thay vì dừng lại
+                            // ở bản tiếng Anh.
                         }
                     }
                 }
 
-                $major = $candidate;
-                $result['major_name'] = $this->matchDictionary(
-                    $candidate,
-                    Majors::all()
-                );
+                $major = $this->matchDictionary($candidate, Majors::all());
             }
         }
 
         // Fallback: ngành học nằm gần dòng tiếng Anh như "Office ... informatics"
-        if (empty($result['major_name'])) {
+        // FIX: điều kiện kiểm tra đổi từ empty($result['major_name']) sang
+        // empty($major) vì DiplomaExtractor không còn gán vào major_name.
+        if (empty($major)) {
             foreach ($lines as $i => $line) {
                 $normLine = $this->normalize($line);
 
@@ -570,12 +802,7 @@ class DiplomaExtractor extends BaseExtractor
                             && mb_strlen($candidate) < 60
                             && !$isEnglishLine
                         ) {
-                            $major = $candidate;
-
-                            $result['major_name'] = $this->matchDictionary(
-                                $candidate,
-                                Majors::all()
-                            );
+                            $major = $this->matchDictionary($candidate, Majors::all());
 
                             break 2;
                         }
@@ -840,7 +1067,13 @@ class DiplomaExtractor extends BaseExtractor
                     str_contains($normLine, 'so hieu')
                     || str_contains($normLine, 'so hieu bang')
                     || str_contains($normLine, 'so hieu van bang')
-                    || str_contains($normLine, 'hieu bang');
+                    || str_contains($normLine, 'hieu bang')
+                    // FIX: VietOCR đôi khi đọc "hiệu" thành "hiệw" (nhầm
+                    // u->w) trên một số phôi bằng — khoan dung thêm biến
+                    // thể này để không bỏ sót nhãn dù giá trị vẫn đọc
+                    // đúng ngay bên cạnh.
+                    || str_contains($normLine, 'so hiew')
+                    || str_contains($normLine, 'hiew bang');
 
 
                 // OCR đôi khi chỉ đọc:
@@ -880,6 +1113,11 @@ class DiplomaExtractor extends BaseExtractor
                     'so hieu',
                     'hieu bang',
                     'hieu',
+                    // FIX: cùng lỗi OCR "hiệu" -> "hiệw" (u->w) — thêm biến
+                    // thể để cắt đúng vị trí lấy giá trị trên cùng dòng.
+                    'so hiew',
+                    'hiew bang',
+                    'hiew',
                 ];
 
                 foreach ($labelPatterns as $label) {
@@ -910,6 +1148,18 @@ class DiplomaExtractor extends BaseExtractor
                     $afterLabel = trim(
                         $afterLabel,
                         " \t:.-–"
+                    );
+
+                    // FIX: một số phôi bằng có chú thích song ngữ dạng
+                    // "Số hiệu/No:" (OCR đọc "No" thành "Nơ") đứng xen giữa
+                    // nhãn và giá trị thật, ví dụ "hiệw Nơ: QH23201803112"
+                    // — nếu không bóc riêng phần "Nơ:"/"No:" này thì chữ
+                    // "N" bị dính luôn vào giá trị, ra "NQH23201803112"
+                    // thay vì "QH23201803112".
+                    $afterLabel = preg_replace(
+                        '/^n[oơ°]?\s*[:.\-–]+\s*/iu',
+                        '',
+                        $afterLabel
                     );
 
                     if (
@@ -1222,6 +1472,25 @@ class DiplomaExtractor extends BaseExtractor
                         " \t:."
                     );
 
+                    // FIX MỚI: một số bằng ghi nhãn song ngữ dính liền kiểu
+                    // "Số vào sổ cấp bằng/Reg Nơ 112/A181" — phần "/Reg Nơ"
+                    // (chú thích tiếng Anh, OCR đọc "No" thành "Nơ") đứng
+                    // xen giữa nhãn tiếng Việt và giá trị thật. Nếu không
+                    // bóc riêng phần này thì "REGNƠ" bị dính luôn vào giá
+                    // trị, ra "REGNƠ112/A181" thay vì đúng phải là
+                    // "112/A181". Cùng dạng lỗi với "Nơ:"/"No:" đã fix ở
+                    // khối Số hiệu bằng phía trên, áp dụng lại ở đây, có
+                    // thêm chấp nhận dấu "/" đứng trước "Reg" và không bắt
+                    // buộc phải có dấu ":"/"." ngay sau "Nơ"/"No" (gặp
+                    // thực tế: "Reg Nơ 112/A181" — không có dấu câu nào
+                    // giữa "Nơ" và số).
+                    $afterLabel = preg_replace(
+                        '/^\/?\s*reg(?:istration)?\.?\s*n[oơ°]?[.:\-–]*\s*/iu',
+                        '',
+                        $afterLabel
+                    );
+                    $afterLabel = ltrim($afterLabel, " \t:.-–/");
+
 
                     if (
                         $afterLabel !== ''
@@ -1513,6 +1782,9 @@ class DiplomaExtractor extends BaseExtractor
 
                 $isDiplomaLabel =
                     str_contains($normLine, 'so hieu')
+                    // FIX: cùng lỗi OCR "hiệu" -> "hiệw" (u->w) như ở
+                    // block chính phía trên — khoan dung thêm ở đây.
+                    || str_contains($normLine, 'so hiew')
                     || preg_match('/^hieu\s*[:.]?$/u', $normLine);
 
                 if (!$isDiplomaLabel) {
@@ -1623,7 +1895,12 @@ class DiplomaExtractor extends BaseExtractor
         // sai/rớt hoàn toàn, nhưng nhãn tiếng Anh song ngữ "Registration N°"
         // đi kèm giá trị vẫn đọc được — khớp thêm trường hợp này.
         if (empty($result['diploma_registry_number'])) {
-            if (preg_match('/Registration\s*N[o°ơ]?[.:\s]*([0-9]+\s*\/\s*[A-Za-z0-9]+)/iu', $text, $m)) {
+            // FIX: bản trước chỉ nhận chữ đầy đủ "Registration" — nhưng phôi
+            // bằng thực tế (vd Bách Khoa) ghi tắt "Reg. No: 112/A181" nên
+            // không khớp, khiến giá trị rơi xuống fallback lỏng hơn phía
+            // trên và giữ lại rác OCR dính phía trước (vd "REPNd112/A181"
+            // thay vì "112/A181"). Chấp nhận cả dạng viết tắt "Reg".
+            if (preg_match('/Reg(?:istration)?\.?\s*N[o°ơ]?[.:\s]*([0-9]+\s*\/\s*[A-Za-z0-9]+)/iu', $text, $m)) {
                 $candidate = preg_replace('/\s+/u', '', $m[1]);
                 if (!$isSameAsDiplomaNumber($candidate)) {
                     $result['diploma_registry_number'] = strtoupper($candidate);

@@ -28,8 +28,7 @@ class ApplicantController extends Controller
             $query->where(function ($q) use ($keyword) {
                 $q->where('id_number', 'like', "%{$keyword}%")
                     ->orWhere('last_name', 'like', "%{$keyword}%")
-                    ->orWhere('first_name', 'like', "%{$keyword}%")
-                    ->orWhere('student_code', 'like', "%{$keyword}%");
+                    ->orWhere('first_name', 'like', "%{$keyword}%");
             });
         }
 
@@ -60,8 +59,6 @@ class ApplicantController extends Controller
 
         $applicant = Applicant::create([
             'id_number' => $request->id_number,
-            'entry_date' => now()->toDateString(),
-            'entered_by' => $request->user()->name,
         ]);
 
         return redirect()->route('applicants.workspace', $applicant->id);
@@ -409,14 +406,7 @@ class ApplicantController extends Controller
     public function update(Request $request, Applicant $applicant): RedirectResponse
     {
         $validated = $request->validate([
-            // Thông tin tuyển sinh
-            'admission_year' => 'nullable|integer|min:2000|max:2100',
-            'admission_round_code' => 'nullable|string|max:100',
-            'admission_round_name' => 'nullable|string|max:255',
-
             // Thông tin hồ sơ
-            'student_code' => 'nullable|string|max:100',
-            'student_id_number' => 'nullable|string|max:100',
             'missing_documents' => 'nullable|string|max:255',
 
             // Thông tin cá nhân
@@ -434,20 +424,14 @@ class ApplicantController extends Controller
             'permanent_address' => 'nullable|string|max:1000',
 
             // THPT
-            'highschool_province_code' => 'nullable|string|max:50',
             'highschool_province_name' => 'nullable|string|max:255',
-            'highschool_code' => 'nullable|string|max:100',
             'highschool_name' => 'nullable|string|max:255',
             'highschool_graduation_year' => 'nullable|integer|min:1900|max:2100',
-            'priority_area' => 'nullable|string|max:100',
-            'priority_subject' => 'nullable|string|max:100',
             'highschool_academic_rank' => 'nullable|string|max:100',
             'highschool_conduct_rank' => 'nullable|string|max:100',
 
             // Trung cấp / Cao đẳng / Đại học
-            'college_province_code' => 'nullable|string|max:50',
             'university_province_name' => 'nullable|string|max:255',
-            'university_code' => 'nullable|string|max:100',
             'university_name' => 'nullable|string|max:255',
             'university_graduation_year' => 'nullable|integer|min:1900|max:2100',
 
@@ -456,24 +440,7 @@ class ApplicantController extends Controller
             'phone_2' => 'nullable|string|max:20',
 
             // Ngành học
-            'major_code' => 'nullable|string|max:100',
             'major_name' => 'nullable|string|max:255',
-            'average_score' => 'nullable|numeric|min:0|max:10',
-            'classification' => 'nullable|string|max:100',
-
-            // Thông tin GB
-            'gb_date' => 'nullable|string|max:20',
-            'gb_template' => 'nullable|string|max:255',
-
-            // Nhập học
-            'entry_date' => 'nullable|string|max:20',
-            'entered_by' => 'nullable|string|max:255',
-            'admission_result' => 'nullable|string|max:255',
-
-            // Các khoản phí
-            'tuition_fee_hk1' => 'nullable|numeric|min:0',
-            'admission_fee' => 'nullable|numeric|min:0',
-            'total_amount' => 'nullable|numeric|min:0',
 
             // Ghi chú
             'note_1' => 'nullable|string|max:1000',
@@ -493,8 +460,6 @@ class ApplicantController extends Controller
         // Chuẩn hóa các trường ngày tháng
         $dateColumns = [
             'birth_date',
-            'gb_date',
-            'entry_date',
         ];
 
         foreach ($dateColumns as $column) {

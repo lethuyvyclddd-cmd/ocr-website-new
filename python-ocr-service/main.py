@@ -278,7 +278,7 @@ try:
     # SỬA: warm-up phải đi qua đúng resize_and_pad() giống hệt luồng
     # thật, để shape được "làm nóng" khớp với shape mọi request sau này
     # sẽ dùng.
-    _dummy_padded, _ = resize_and_pad(_dummy_img)
+    _dummy_padded, _, _, _ = resize_and_pad(_dummy_img)
 
     with ocr_lock:
         _ = list(
@@ -307,6 +307,17 @@ print("DANG KHOI TAO VIETOCR...")
 print("=" * 70)
 
 VIETOCR_MODEL_NAME = "vgg_transformer"
+vietocr_config = Cfg.load_config_from_name(VIETOCR_MODEL_NAME)
+
+# FIX SSL: vocr.vn đã hết hạn chứng chỉ. Chuyển URL cấu hình sang GitHub.
+from vietocr.tool import config as vietocr_config_module
+
+vietocr_config_module.url_config["base"] = (
+    "https://raw.githubusercontent.com/pbcquoc/vietocr/master/config/base.yml"
+)
+vietocr_config_module.url_config[VIETOCR_MODEL_NAME] = (
+    f"https://raw.githubusercontent.com/pbcquoc/vietocr/master/config/{VIETOCR_MODEL_NAME}.yml"
+)
 
 vietocr_config = Cfg.load_config_from_name(
     VIETOCR_MODEL_NAME

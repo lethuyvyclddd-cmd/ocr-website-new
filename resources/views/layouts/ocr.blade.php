@@ -78,7 +78,7 @@
         .logout-btn:hover{background:#FDEDEC}
 
         /* Main */
-        .page{max-width:1320px;margin:auto;padding:28px 24px 40px}
+        .page{max-width:96%;margin:auto;padding:28px 24px 40px}
 
         .card-box{
             background:var(--white);border-radius:var(--radius);

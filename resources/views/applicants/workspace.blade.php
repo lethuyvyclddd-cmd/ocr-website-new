@@ -111,10 +111,10 @@
                             $rawValue = $rawValue->format('d/m/Y');
                         }
                     @endphp
-                    <div class="col-md-4 mb-3">
+                    <div class="col-md-3 mb-3">
                         <label class="form-label">{{ $label }}</label>
                         <input type="text" name="{{ $column }}" class="form-control"
-                               value="{{ old($column, $rawValue) }}">
+                            value="{{ old($column, $rawValue) }}">
                     </div>
                 @endforeach
             </div>
