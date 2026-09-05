@@ -11,11 +11,50 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ApplicantController extends Controller
 {
+    /**
+     * Mapping cố định: tên cột trong bảng `applicants` => cột (chữ cái)
+     * trong file Excel mẫu gốc (mau_exel_project.xlsx). Đây là các cột
+     * DUY NHẤT được điền tự động từ dữ liệu OCR; các cột hành chính khác
+     * trong file mẫu (Mã HS, Đợt TS, Mã Ngành, Học Phí...) không thuộc
+     * phạm vi này và sẽ để trống.
+     *
+     * @var array<string, string>
+     */
+    protected const EXCEL_COLUMN_MAP = [
+        'missing_documents'           => 'F',
+        'last_name'                   => 'G',
+        'first_name'                  => 'H',
+        'gender'                      => 'I',
+        'birth_date'                  => 'J',
+        'id_number'                   => 'K',
+        'place_of_birth'              => 'L',
+        'ethnic'                      => 'M',
+        'ward_name'                   => 'N',
+        'province_name'               => 'O',
+        'highschool_province_name'    => 'Q',
+        'highschool_name'             => 'S',
+        'highschool_graduation_year'  => 'T',
+        'highschool_academic_rank'    => 'W',
+        'highschool_conduct_rank'     => 'X',
+        'university_province_name'    => 'Z',
+        'university_name'             => 'AB',
+        'university_graduation_year'  => 'AC',
+        'permanent_address'           => 'AD',
+        'phone_1'                     => 'AE',
+        'phone_2'                     => 'AF',
+        'major_name'                  => 'AH',
+        'note_1'                      => 'AS',
+        'note_2'                      => 'AT',
+        'training_type'               => 'AU',
+        'diploma_number'              => 'AV',
+        'diploma_registry_number'     => 'AW',
+    ];
+
     public function __construct(protected FileTextExtractorService $fileExtractor)
     {
     }
@@ -581,28 +620,39 @@ class ApplicantController extends Controller
         return $this->buildExcel($applicants, 'DanhSach_ThiSinh_' . now()->format('YmdHis') . '.xlsx');
     }
 
+    /**
+     * Điền dữ liệu applicants vào ĐÚNG file Excel mẫu của trường
+     * (storage/app/templates/mau_exel_project.xlsx), thay vì tạo một
+     * bảng mới từ đầu. Nhờ vậy vị trí cột, header, style của file mẫu
+     * gốc (do phòng đào tạo cung cấp) được giữ nguyên, các cột hành
+     * chính khác (Mã HS, Đợt TS, Mã Ngành...) không bị OCR-tool đụng vào
+     * và vẫn có thể được điền tay sau đó.
+     */
     protected function buildExcel(iterable $applicants, string $fileName)
     {
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
+        // Laravel 11: disk mặc định 'local' có root là storage/app/private,
+        // nên file mẫu đặt tại storage/app/private/templates/... chứ không
+        // phải storage/app/templates/... (khác với Laravel 10 trở về trước).
+        $templatePath = Storage::disk('local')->path('templates/mau_exel_project.xlsx');
 
-        $columns = array_keys(Applicant::EXPORT_COLUMNS);
-        $headers = array_values(Applicant::EXPORT_COLUMNS);
-
-        foreach ($headers as $i => $header) {
-            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-            $sheet->setCellValue($colLetter . '1', $header);
+        if (! file_exists($templatePath)) {
+            abort(500, 'Không tìm thấy file mẫu Excel tại storage/app/private/templates/mau_exel_project.xlsx');
         }
 
-        $rowIndex = 2;
+        $spreadsheet = IOFactory::load($templatePath);
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $rowIndex = 2; // dòng 1 là header có sẵn trong file mẫu, không ghi đè
+
         foreach ($applicants as $applicant) {
-            foreach ($columns as $i => $column) {
+            foreach (self::EXCEL_COLUMN_MAP as $column => $colLetter) {
                 $value = $applicant->{$column};
+
                 if ($value instanceof \Carbon\Carbon) {
                     $value = $value->format('d/m/Y');
                 }
-                $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i + 1);
-                $sheet->setCellValue($colLetter . $rowIndex, $value);
+
+                $sheet->setCellValue($colLetter . $rowIndex, $value ?? '');
             }
             $rowIndex++;
         }
