@@ -30,3 +30,4 @@ __pycache__/
 /storage/framework/views/*
 /storage/framework/cache/*
 /storage/framework/testing/*
+python-ocr-service/debug_footer/
