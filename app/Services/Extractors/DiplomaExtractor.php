@@ -52,7 +52,17 @@ class DiplomaExtractor extends BaseExtractor
     // trước (khối "Cho:"). Các fallback dò mù (không có nhãn rõ ràng, như
     // "Upon:") vẫn giữ mặc định false để tránh nhận nhầm tên
     // trường/ngành/tiêu đề (đều thường in hoa).
-    private function looksLikeName(string $line, bool $allowAllCaps = false): bool
+    // SỬA (FIX BUG "toàn bộ field rỗng trắng" khi thêm BuddhistDiplomaExtractor
+    // extends class này): looksLikeName() trước đây khai báo "private" — PHP
+    // không cho phép class con gọi method private của class cha (dù có
+    // extends), gọi vào sẽ ném Fatal Error "Call to private method", khiến
+    // toàn bộ extract() của class con chết giữa chừng và trả về mảng rỗng
+    // (nếu có try/catch bọc ngoài nuốt mất exception) — biểu hiện y hệt như
+    // "OCR đọc được chữ nhưng không field nào được ghi vào form". Đổi sang
+    // "protected" để class con (BuddhistDiplomaExtractor) gọi lại được —
+    // thay đổi CHỈ mở rộng phạm vi truy cập, không đổi hành vi, không ảnh
+    // hưởng gì tới logic Bách Khoa hiện có.
+    protected function looksLikeName(string $line, bool $allowAllCaps = false): bool
     {
         $line = trim($line, " \t:.-");
         $words = preg_split('/\s+/u', $line, -1, PREG_SPLIT_NO_EMPTY);

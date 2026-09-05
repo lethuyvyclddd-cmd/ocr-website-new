@@ -85,6 +85,72 @@ Bỏ qua VietOCR cho trang không cần dùng (THÊM MỚI):
       cho luồng đó, hoặc chấp nhận mất tính năng skip trang (đã có sẵn
       fallback an toàn: chạy VietOCR cho mọi trang nếu không đọc được
       rec_texts).
+
+Tăng cường riêng vùng "Số hiệu/Số vào sổ" trên bằng tốt nghiệp (THÊM MỚI):
+    - Vùng chữ "Số hiệu/Serial No." và "Số vào sổ cấp bằng/Reg. No." trên
+      phôi bằng luôn in cỡ chữ NHỎ HƠN HẲN phần còn lại của văn bằng
+      (~10-14px chiều cao chữ trên ảnh gốc cỡ 500-800px chiều rộng).
+      OCR chung 1 lần với toàn ảnh khiến vùng này hay bị PaddleOCR lọc
+      bỏ vì box quá nhỏ, hoặc VietOCR đọc sai gần hết ký tự do crop quá
+      nhỏ/mờ (case thực tế: "Số hiệu" -> "Số Hiện", "Serial No." ->
+      "Sental Nam", số bị đọc sai lung tung).
+    - Giải pháp: với ảnh nghi là văn bằng (đoán qua tên file Laravel đặt,
+      vd "..._diploma_transcript_..."), CẮT RIÊNG dải ngang góc dưới ảnh
+      (theo % chiều cao, đã đo trên mẫu thật), phóng to x4 + CLAHE +
+      unsharp mask, rồi chạy LẠI đúng pipeline PaddleOCR detect + VietOCR
+      recognize (dùng lại y hệt extract_lines() hiện có, KHÔNG viết logic
+      riêng) trên ảnh đã tăng cường này. Kết quả được CHÈN LÊN ĐẦU danh
+      sách "lines" của ảnh gốc — vì BuddhistDiplomaExtractor/DiplomaExtractor
+      bên PHP lấy NHÃN ĐẦU TIÊN tìm thấy trong text, nên bản đọc rõ hơn
+      (từ vùng đã tăng cường) sẽ được ưu tiên dùng thay vì bản mờ đọc
+      được từ lần OCR ảnh gốc.
+    - Đây là bước TĂNG CƯỜNG, không phải bước THAY THẾ: nếu OCR trên vùng
+      tăng cường lỗi/rỗng, code tự bỏ qua và giữ nguyên kết quả từ ảnh
+      gốc như trước — không làm hỏng luồng OCR chính.
+
+Nhiều biến thể phôi bằng cho vùng "Số hiệu/Số vào sổ" (THÊM MỚI):
+    - Dải % chiều cao cố định (FOOTER_Y_START_RATIO/FOOTER_Y_END_RATIO)
+      chỉ được đo + test trên 2 mẫu bằng Phật học kiểu Vietnam Buddhist
+      University (bản chỉ tiếng Việt 503x590 và bản song ngữ 763x590).
+      Với mẫu phôi bằng khác (vd "Triết học Phật giáo", aspect ratio gốc
+      656x467 khác hẳn), dòng "Số hiệu/Số vào sổ" nằm SÁT MÉP DƯỚI hơn
+      nhiều, ra ngoài dải 0.78-0.95 cố định -> vùng crop ra không chứa
+      đúng nội dung cần đọc (đọc ra toàn rác không liên quan gì tới
+      "số hiệu"/"số vào sổ"), khác biệt với lỗi VietOCR-đọc-sai-ký-tự
+      (trường hợp đó vẫn còn giữ được khung nhãn nhận diện được).
+    - Giải pháp CŨ (vẫn giữ làm fallback — xem hàm find_footer_anchor_y()
+      bên dưới cho giải pháp CHÍNH mới): thay 1 dải cố định bằng danh
+      sách FOOTER_VARIANTS, mỗi biến thể gắn với 1 vài từ khoá đặc
+      trưng của ĐÚNG mẫu phôi bằng đó (vd "triết học phật giáo",
+      "buddhist philosophy"). Hàm pick_footer_ratios() so khớp các từ
+      khoá này trên text ĐÃ OCR ĐƯỢC Ở LẦN ĐỌC TOÀN ẢNH ĐẦU TIÊN
+      (lines/page_lines đã có sẵn, KHÔNG tốn thêm chi phí OCR nào để
+      lấy tín hiệu phân loại này), rồi trả về đúng dải y_start/y_end
+      của biến thể khớp. Nếu không khớp biến thể nào, dùng "default"
+      (giữ nguyên giá trị đã đo cho mẫu VBU cũ).
+    - VẤN ĐỀ CỦA GIẢI PHÁP CŨ (lý do thêm find_footer_anchor_y()): vẫn
+      là ĐOÁN MÙ theo % cố định cho từng "biến thể" phải đo tay thủ
+      công trên từng mẫu ảnh — mỗi ảnh scan/chụp thực tế lại có tỉ lệ,
+      margin, độ nghiêng khác nhau nên cùng 1 mẫu phôi vẫn có thể lệch
+      %, và mẫu hoàn toàn mới (chưa từng đo) luôn rơi vào "default" và
+      gần như chắc chắn cắt sai.
+    - GIẢI PHÁP MỚI (ưu tiên dùng, xem find_footer_anchor_y()): thay vì
+      đoán % cố định, dùng NGAY toạ độ box THẬT của các dòng đã OCR
+      được ở lượt đọc toàn ảnh đầu tiên — tìm dòng nào chứa (dù chỉ một
+      phần, do fuzzy match không dấu) các từ khoá liên quan nhãn "Số
+      hiệu"/"Serial"/"Số vào sổ"/"Reg", lấy toạ độ y thật của dòng đó
+      làm neo, rồi crop dải NGAY QUANH toạ độ này (có margin). Cách này
+      tự thích nghi với TỪNG ảnh cụ thể, không cần đo tay % cho từng
+      mẫu phôi mới. pick_footer_ratios() theo biến thể CŨ chỉ còn dùng
+      làm fallback khi không tìm được anchor thật nào (case OCR đọc nát
+      hoàn toàn, không còn dấu vết gì của nhãn) — không phá vỡ hành vi
+      đã có.
+    - LƯU Ý: dải của biến thể mới (vd "triet_hoc_phat_giao") CHỈ LÀ ƯỚC
+      LƯỢNG dựa trên quan sát 1 ảnh mẫu, CHƯA được đo + test trên nhiều
+      mẫu thật như dải "default". Cần thu thập thêm mẫu và tinh chỉnh
+      lại 2 số y_start/y_end này trước khi tin tưởng hoàn toàn — đây là
+      NƠI DUY NHẤT cần sửa nếu vẫn crop sai vùng cho biến thể đó (khi
+      rơi xuống fallback này).
 """
 
 import os
@@ -155,6 +221,329 @@ DEBUG_FILTER = True
 # VietOCR). Đây là fix chính cho vấn đề detect chậm bất thường (xem
 # giải thích ở docstring đầu file).
 DET_TARGET_SIZE = 960
+
+# ============================================================
+# THÊM MỚI: CẤU HÌNH TĂNG CƯỜNG VÙNG "SỐ HIỆU / SỐ VÀO SỔ"
+# ============================================================
+#
+# Xem giải thích đầy đủ ở docstring đầu file (mục "Tăng cường riêng
+# vùng Số hiệu/Số vào sổ trên bằng tốt nghiệp").
+
+# Bật/tắt tính năng này. Đặt False để quay lại hành vi cũ (chỉ OCR 1
+# lần trên toàn ảnh) mà không cần xoá code.
+FOOTER_ENABLE = True
+
+# Chỉ chạy thêm bước này cho ảnh NGHI LÀ văn bằng (đoán qua tên file
+# Laravel đặt, vd "applicant_38_diploma_transcript_...") — tránh tốn
+# thêm thời gian vô ích cho CCCD/phiếu đăng ký (vốn không có 2 dòng
+# "Số hiệu/Số vào sổ" này để mà tăng cường).
+#
+# LƯU Ý: endpoint /ocr hiện KHÔNG nhận document_type (chỉ /ocr-pdf mới
+# có). Nếu sau này bạn thêm document_type vào /ocr, có thể thay điều
+# kiện đoán-qua-tên-file này bằng kiểm tra document_type cho chính xác
+# hơn (ví dụ document_type == "diploma_transcript").
+FOOTER_FILENAME_KEYWORDS = ("diploma", "bang", "transcript")
+
+# Vị trí dải cắt MẶC ĐỊNH, tính theo % chiều cao ảnh recognition_image
+# (0.0 = đỉnh ảnh, 1.0 = đáy ảnh). Đã đo + test trực tiếp trên mẫu phôi
+# bằng thật (bản chỉ tiếng Việt 503x590 và bản song ngữ 763x590) — cả 2
+# đều crop trúng đúng dải chứa "Số hiệu"/"Số vào sổ". Cắt FULL CHIỀU
+# RỘNG (không cắt theo x) vì vị trí bắt đầu theo chiều ngang khác nhau
+# tuỳ loại phôi (1 cột hay song ngữ 2 cột), trong khi vị trí theo chiều
+# dọc (% chiều cao) ổn định hơn nhiều giữa các loại phôi CÙNG NHÓM.
+#
+# LƯU Ý: đây chỉ còn là giá trị "default" — DÙNG LÀM FALLBACK CUỐI CÙNG
+# khi find_footer_anchor_y() (giải pháp chính, dựa trên toạ độ box
+# THẬT) không tìm được anchor nào. Xem FOOTER_VARIANTS +
+# pick_footer_ratios() bên dưới.
+FOOTER_Y_START_RATIO = 0.78
+FOOTER_Y_END_RATIO = 0.95
+
+# Hệ số phóng to vùng đã cắt trước khi OCR lại.
+FOOTER_UPSCALE = 4
+
+# ============================================================
+# THÊM MỚI: NHIỀU BIẾN THỂ PHÔI BẰNG PHẬT GIÁO (vị trí dòng
+# "Số hiệu/Số vào sổ" khác nhau tuỳ mẫu — xem giải thích đầy đủ ở
+# docstring đầu file, mục "Nhiều biến thể phôi bằng...").
+#
+# LƯU Ý: từ khi có find_footer_anchor_y() (neo theo toạ độ box THẬT),
+# danh sách này chỉ còn là FALLBACK khi không tìm được anchor thật nào
+# trong ảnh — không còn là cơ chế chính để chọn vùng crop nữa.
+# ============================================================
+#
+# Mỗi entry:
+#   name      : tên biến thể (chỉ để log/debug)
+#   keywords  : các cụm từ khoá (KHÔNG DẤU, viết thường) đặc trưng cho
+#               ĐÚNG mẫu phôi bằng đó — so khớp trên bản đã
+#               strip_diacritics_vn() của text ĐÃ OCR ĐƯỢC Ở LẦN ĐỌC
+#               TOÀN ẢNH ĐẦU TIÊN (không tốn thêm chi phí OCR).
+#   y_start / y_end : dải % chiều cao dùng cho biến thể này.
+#
+# "default" LUÔN đứng CUỐI danh sách, dùng làm phương án dự phòng khi
+# không khớp keyword của biến thể nào ở trên — giữ nguyên giá trị đã đo
+# cho mẫu VBU cũ (FOOTER_Y_START_RATIO/FOOTER_Y_END_RATIO), không đổi
+# hành vi của các mẫu đang chạy tốt.
+#
+# CẢNH BÁO: dải của "triet_hoc_phat_giao" là ƯỚC LƯỢNG dựa trên quan
+# sát 1 ảnh mẫu DUY NHẤT, CHƯA được đo + test trên nhiều mẫu thật như
+# dải "default" — cần thu thập thêm mẫu bằng "Triết học Phật giáo"
+# khác và tinh chỉnh lại 2 số này nếu vẫn crop sai vùng.
+FOOTER_VARIANTS = [
+    {
+        "name": "triet_hoc_phat_giao",
+        "keywords": ("triet hoc phat giao", "buddhist philosophy"),
+        # SỬA (lần 2 - vẫn là ước lượng, xem log [DEBUG-Y] để tự đo
+        # lại chính xác nếu vẫn chưa trúng): dải 0.90-0.99 cũ crop lố
+        # xuống quá đáy, dính hoa văn viền thay vì dòng "Số hiệu".
+        # Thu hẹp + dịch lên cao hơn.
+        "y_start": 0.80,
+        "y_end": 0.92,
+    },
+    {
+        "name": "default",
+        "keywords": (),
+        "y_start": FOOTER_Y_START_RATIO,
+        "y_end": FOOTER_Y_END_RATIO,
+    },
+]
+
+
+def pick_footer_ratios(existing_text: str) -> tuple[float, float]:
+    """
+    Chọn dải % chiều cao (y_start, y_end) để crop vùng "Số hiệu/Số
+    vào sổ", dựa trên nội dung ĐÃ ĐỌC ĐƯỢC ở lần OCR toàn ảnh đầu
+    tiên (existing_text — nối các "text" trong "lines"/"page_lines"
+    bằng "\n", đã có sẵn TRƯỚC KHI bước tăng cường footer chạy).
+
+    LƯU Ý: đây giờ chỉ còn là FALLBACK — nơi gọi nên ưu tiên thử
+    find_footer_anchor_y() (neo theo toạ độ box THẬT) trước, chỉ rơi
+    xuống hàm này khi không tìm được anchor thật nào.
+
+    Không tốn thêm chi phí OCR nào để lấy tín hiệu phân loại này —
+    chỉ so khớp chuỗi (đã bỏ dấu, viết thường) trên text đã có.
+
+    Nếu không khớp keyword của biến thể nào, trả về dải "default"
+    (hành vi y hệt code cũ, không ảnh hưởng các mẫu đã hoạt động tốt).
+    """
+
+    t = strip_diacritics_vn(existing_text)
+
+    for variant in FOOTER_VARIANTS:
+        if variant["name"] == "default":
+            continue
+
+        if any(kw in t for kw in variant["keywords"]):
+            if DEBUG_FILTER:
+                print(
+                    f"[FOOTER] Nhan dien bien the: {variant['name']} "
+                    f"(y_start={variant['y_start']}, "
+                    f"y_end={variant['y_end']})"
+                )
+            return variant["y_start"], variant["y_end"]
+
+    default = FOOTER_VARIANTS[-1]
+    return default["y_start"], default["y_end"]
+
+
+# ============================================================
+# THÊM MỚI: NEO VÙNG CROP THEO TOẠ ĐỘ BOX THẬT (giải pháp chính,
+# thay cho đoán mù % cố định — xem giải thích đầy đủ ở docstring
+# đầu file, mục "Nhiều biến thể phôi bằng...").
+# ============================================================
+
+FOOTER_ANCHOR_KEYWORDS = (
+    "so hieu",
+    "so hiew",
+    "hieu bang",
+    "serial",
+    "so vao so",
+    "vao so cap bang",
+    "reg no",
+    "reg.",
+    "so vho",  # biến thể lỗi OCR đã gặp thực tế (a->h trong "vao")
+)
+
+# THÊM MỚI (TIER 2 — xem giải thích ở find_footer_anchor_y()): case
+# thực tế gặp phải (mẫu "Triết học Phật giáo") cho thấy đôi khi nhãn bị
+# OCR đọc NÁT HOÀN TOÀN, không còn giữ lại bất kỳ mảnh nào của "hieu"/
+# "vao so" (case thực tế: "Số hiệu/Số vào sổ..." -> "bo nhachp bing/
+# Xua" — không có ký tự nào trùng khớp FOOTER_ANCHOR_KEYWORDS). Khi đó
+# tier 1 (khớp theo nhãn) chắc chắn thất bại dù toạ độ box vẫn đúng.
+#
+# Danh sách loại trừ: các cụm nội dung THƯỜNG XUẤT HIỆN ở vùng đáy ảnh
+# văn bằng nhưng chắc chắn KHÔNG PHẢI dòng "Số hiệu/Số vào sổ" (tên
+# người ký, chức danh, quốc hiệu, câu boilerplate chứng thực...) — dùng
+# để loại các dòng này ra khỏi ứng viên tier 2, dù chúng có thể tình cờ
+# chứa số (vd ngày ký "20-12-2022").
+FOOTER_SHAPE_DENYLIST = (
+    "thich tri quang",
+    "chu tich",
+    "ubnd",
+    "phuong",
+    "chung thuc",
+    "ban sao",
+    "given",
+    "seal",
+    "hoa thuong",
+    "hon thuong",  # biến thể OCR đọc sai "Hòa thượng"
+    "vien truong",
+    "rector",
+    "university",
+    "buddhist",
+    "ngay",  # dòng ngày ký công chứng dạng "Ngày...20-12-2022"
+)
+
+
+def find_footer_anchor_by_shape(
+    lines: list[dict],
+    image_height: int,
+) -> tuple[float, float] | None:
+    """
+    THÊM MỚI (TIER 2 — dùng khi tier 1 theo nhãn thất bại): thay vì đòi
+    hỏi phải nhận ra CHỮ của nhãn (tier 1 — find_footer_anchor_y()),
+    hàm này neo theo HÌNH DẠNG + VỊ TRÍ: dòng "Số hiệu/Số vào sổ" luôn
+    là 1 trong những dòng SÁT ĐÁY ẢNH NHẤT (dưới toàn bộ chữ ký/con dấu
+    chứng thực) và luôn chứa CHỮ SỐ — bất kể nhãn có đọc đúng hay không,
+    vì đây là ĐẶC ĐIỂM VẬT LÝ của tấm ảnh, không phụ thuộc OCR đọc đúng
+    chữ gì.
+
+    Chỉ xét các dòng có y_top nằm trong 15% CUỐI CÙNG của ảnh (>= 0.85)
+    để không vô tình bắt nhầm các field khác nằm giữa ảnh (ngày sinh,
+    năm tốt nghiệp...). Trong vùng đó, loại bỏ các dòng khớp
+    FOOTER_SHAPE_DENYLIST (tên người ký/chức danh/câu chứng thực — biết
+    chắc không phải mã số), chỉ giữ lại dòng có ít nhất 1 chữ số.
+
+    Trả về None nếu không có dòng nào thoả — nơi gọi tự rơi xuống tier
+    3 (pick_footer_ratios() theo biến thể % cố định).
+    """
+
+    candidates = []
+
+    for line in lines:
+        text = line.get("text") or ""
+        box = line.get("box") or []
+
+        if not text or not box:
+            continue
+
+        ys = [p[1] for p in box if len(p) == 2]
+        if not ys:
+            continue
+
+        y_top = min(ys)
+
+        if (y_top / image_height) < 0.85:
+            continue
+
+        norm = strip_diacritics_vn(text)
+
+        if any(bad in norm for bad in FOOTER_SHAPE_DENYLIST):
+            continue
+
+        if not any(ch.isdigit() for ch in text):
+            continue
+
+        candidates.append((y_top, max(ys)))
+
+    if not candidates:
+        return None
+
+    y_top = min(c[0] for c in candidates)
+    y_bottom = max(c[1] for c in candidates)
+
+    # Margin nhỏ hơn tier 1 vì đã neo khá sát vùng thật (dòng gần đáy
+    # nhất có chữ số), chỉ cần đệm thêm chút để không hụt mất phần
+    # nhãn đứng ngay trên (thường không có số) hoặc phần giá trị bị
+    # tràn xuống dòng cuối cùng của ảnh.
+    margin_up = image_height * 0.03
+    margin_down = image_height * 0.05
+
+    y_start = max(0.0, (y_top - margin_up) / image_height)
+    y_end = min(1.0, (y_bottom + margin_down) / image_height)
+
+    return y_start, y_end
+
+
+def find_footer_anchor_y(
+    lines: list[dict],
+    image_height: int,
+) -> tuple[float, float] | None:
+    """
+    THÊM MỚI (thay cho đoán mù % theo biến thể): tìm NGAY vị trí thật
+    của dòng chứa nhãn "Số hiệu"/"Serial"/"Số vào sổ"/"Reg" trong danh
+    sách `lines` đã OCR được ở lượt đọc toàn ảnh đầu tiên (có toạ độ
+    box THẬT, không phải suy đoán %), rồi trả về dải crop NGAY QUANH
+    toạ độ đó. Dùng fuzzy match không dấu (FOOTER_ANCHOR_KEYWORDS) nên
+    vẫn bắt được khi nhãn bị OCR đọc sai 1 phần (vd "Số hiệu" -> "Số
+    hiện", vẫn còn "hieu"/"hien" gần đúng).
+
+    Vì mỗi ảnh tự định vị đúng vị trí của chính nó dựa trên nội dung
+    thật đã OCR được, cách này KHÔNG cần đo tay % cho từng mẫu phôi
+    mới như FOOTER_VARIANTS/pick_footer_ratios() — tự thích nghi với
+    layout của từng ảnh cụ thể.
+
+    FIX MỚI (TIER 2 — case thực tế: nhãn bị OCR đọc NÁT HOÀN TOÀN,
+    "Số hiệu/Số vào sổ..." -> "bo nhachp bing/ Xua", không còn giữ lại
+    mảnh nào của "hieu"/"vao so" để tier 1 (khớp theo nhãn) bắt được):
+    nếu tier 1 không tìm thấy gì, thử tiếp find_footer_anchor_by_shape()
+    — neo theo VỊ TRÍ (sát đáy ảnh) + HÌNH DẠNG (có chữ số, không phải
+    tên người ký/chức danh đã biết) thay vì đòi đọc đúng chữ nhãn.
+
+    Trả về None nếu CẢ 2 TIER đều không tìm thấy gì — nơi gọi tự rơi về
+    fallback pick_footer_ratios() theo biến thể % cố định (tier 3,
+    không phá vỡ hành vi hiện có cho các mẫu chưa từng gặp).
+    """
+
+    best_y_top = None
+    best_y_bottom = None
+
+    for line in lines:
+        text = line.get("text") or ""
+        box = line.get("box") or []
+
+        if not text or not box:
+            continue
+
+        norm = strip_diacritics_vn(text)
+
+        if not any(kw in norm for kw in FOOTER_ANCHOR_KEYWORDS):
+            continue
+
+        ys = [p[1] for p in box if len(p) == 2]
+        if not ys:
+            continue
+
+        y_top = min(ys)
+        y_bottom = max(ys)
+
+        # Ưu tiên dòng ĐẦU TIÊN xuất hiện theo vị trí (thường "Số hiệu"
+        # đứng trước "Số vào sổ" trên phôi bằng), nhưng thực ra chỉ cần
+        # 1 anchor đủ tin cậy để định vị dải crop — không cần tách
+        # riêng 2 nhãn ở bước này vì bước enhance chỉ cần "trúng vùng",
+        # còn việc tách 2 field vẫn do regex PHP đảm nhiệm trên text đã
+        # rõ hơn.
+        if best_y_top is None or y_top < best_y_top:
+            best_y_top = y_top
+            best_y_bottom = y_bottom
+
+    if best_y_top is not None:
+        # Margin: mở rộng LÊN một chút (phòng giá trị thật nằm NGAY
+        # TRÊN nhãn — case "OCR đảo thứ tự" đã từng gặp bên
+        # DiplomaExtractor PHP), và mở rộng XUỐNG nhiều hơn (layout phổ
+        # biến nhất: giá trị nằm ngay dưới nhãn, có khi 2 dòng: Số hiệu
+        # + Số vào sổ).
+        margin_up = image_height * 0.03
+        margin_down = image_height * 0.12
+
+        y_start = max(0.0, (best_y_top - margin_up) / image_height)
+        y_end = min(1.0, (best_y_bottom + margin_down) / image_height)
+
+        return y_start, y_end
+
+    # TIER 1 thất bại (nhãn bị đọc nát hoàn toàn) -> thử TIER 2.
+    return find_footer_anchor_by_shape(lines, image_height)
+
 
 # THÊM MỚI: mỗi document_type Laravel gửi xuống chỉ CẦN các loại trang
 # nào (đầu ra của classify_page_quick()). Trang không thuộc tập này sẽ
@@ -309,6 +698,149 @@ def scale_poly_to_original(
     )
 
     return poly_np
+
+
+# ============================================================
+# THÊM MỚI: TĂNG CƯỜNG VÙNG "SỐ HIỆU / SỐ VÀO SỔ"
+# ============================================================
+#
+# Xem giải thích đầy đủ ở docstring đầu file. Hàm này CHỈ crop + tăng
+# cường ảnh — việc detect/recognize vẫn tái dùng nguyên xi
+# resize_and_pad() + ocr_engine.predict() + extract_lines() đã có sẵn,
+# không viết logic OCR riêng ở đây.
+
+def crop_and_enhance_footer(
+    recognition_image: np.ndarray,
+    y_start_ratio: float = FOOTER_Y_START_RATIO,
+    y_end_ratio: float = FOOTER_Y_END_RATIO,
+    scale: int = FOOTER_UPSCALE,
+):
+    """
+    Cắt dải ngang góc dưới ảnh văn bằng (full chiều rộng, theo %
+    chiều cao) rồi phóng to + KHỬ MỰC ĐỎ CON DẤU + CLAHE (tăng tương
+    phản cục bộ) + unsharp mask (làm nét) để OCR đọc chính xác hơn
+    vùng chữ nhỏ "Số hiệu/Số vào sổ".
+
+    THÊM MỚI (KHỬ MỰC ĐỎ CON DẤU): case thực tế gặp phải — dòng "Số
+    hiệu/Serial No." và "Số vào sổ/Reg. No." bị chính con dấu đỏ của
+    trường/học viện đóng ĐÈ TRỰC TIẾP lên trên (không phải lệch vùng
+    crop — vùng crop đã trúng đúng dòng), khiến nét mực đỏ cắt ngang
+    làm vỡ hình dạng ký tự đen bên dưới, VietOCR đọc ra toàn rác
+    ("bo nhachp bing/ Xua"...) dù vùng crop hoàn toàn chính xác.
+
+    Ý tưởng: mực dấu là ĐỎ (kênh R cao, kênh G/B thấp), còn chữ in là
+    ĐEN (cả 3 kênh đều thấp và gần bằng nhau). Thay vì convert thẳng
+    ảnh RGB sang gray bằng công thức trung bình có trọng số thông
+    thường (vốn vẫn cộng dồn một phần cường độ kênh R của mực đỏ vào
+    ảnh xám, làm nét chữ bị nhiễu bởi nét dấu chồng lên), ta lấy
+    min(G, B) làm ảnh xám:
+        - Ở vùng chỉ có mực đỏ (không có chữ đen đè lên): G và B đều
+          thấp -> min(G,B) thấp -> vùng đó gần như bị "làm mờ đi",
+          giảm hẳn ảnh hưởng của nét dấu.
+        - Ở vùng có chữ đen (kể cả đang nằm trên nền có dấu đỏ): cả
+          3 kênh đều thấp do chữ đen -> G và B đều thấp -> min(G,B)
+          thấp -> giữ lại đúng nét chữ.
+    Cách này KHÔNG hoàn hảo (nếu dấu đè kín 100% một ký tự, nét chữ ở
+    đúng điểm đó vẫn mất — đây là giới hạn vật lý, không phải lỗi
+    code), nhưng làm giảm đáng kể nhiễu do phần mực đỏ KHÔNG chồng
+    trực tiếp lên chữ (viền dấu, các nét dấu nằm ngoài vùng chữ).
+
+    THÊM MỚI TRƯỚC ĐÓ: y_start_ratio/y_end_ratio do nơi gọi truyền vào
+    (xem find_footer_anchor_y() — ưu tiên — hoặc pick_footer_ratios()
+    — fallback) thay vì luôn dùng đúng 1 dải cố định — để hỗ trợ nhiều
+    biến thể phôi bằng có vị trí dòng "Số hiệu/Số vào sổ" khác nhau.
+    Giá trị mặc định của tham số vẫn giữ nguyên dải "default" (đã đo
+    cho mẫu VBU) để không đổi hành vi nếu ai gọi hàm này mà không
+    truyền tham số.
+
+    LƯU Ý QUAN TRỌNG: recognition_image trong pipeline này là ảnh RGB
+    (không phải BGR — xem comment trong extract_lines() bước 8: hàm
+    preprocess() tạo ảnh RGB từ PIL, các bước xử lý sau đó trong file
+    này đều giữ nguyên convention RGB, không convert sang BGR ở đâu
+    cả). Vì vậy split() bên dưới lấy đúng thứ tự (R, G, B), không phải
+    (B, G, R).
+
+    Trả về None nếu ảnh đầu vào quá nhỏ / crop rỗng — nơi gọi hàm này
+    cần tự kiểm tra None và bỏ qua bước tăng cường, KHÔNG raise lỗi làm
+    hỏng luồng OCR ảnh gốc (đây là bước tăng cường thêm, không phải bước
+    bắt buộc).
+    """
+
+    if recognition_image is None or recognition_image.size == 0:
+        return None
+
+    h, w = recognition_image.shape[:2]
+
+    y1 = max(0, int(h * y_start_ratio))
+    y2 = min(h, int(h * y_end_ratio))
+
+    if y2 <= y1:
+        return None
+
+    footer = recognition_image[y1:y2, 0:w]
+
+    if footer.size == 0:
+        return None
+
+    fh, fw = footer.shape[:2]
+
+    if fh < 2 or fw < 2:
+        return None
+
+    upscaled = cv2.resize(
+        footer,
+        (fw * scale, fh * scale),
+        interpolation=cv2.INTER_CUBIC,
+    )
+
+    # --------------------------------------------------------------
+    # THÊM MỚI: KHỬ MỰC ĐỎ CON DẤU trước khi chuyển sang gray thường.
+    #
+    # upscaled đang là ảnh RGB 3 kênh (xem LƯU Ý ở docstring).
+    # min(G, B) giữ lại nét chữ đen, giảm ảnh hưởng của mực đỏ ở
+    # những vùng con dấu không trực tiếp chồng lên ký tự.
+    #
+    # Có bọc try/except phòng trường hợp ảnh đầu vào bất thường (vd
+    # chỉ có 1 kênh) — nếu lỗi thì rơi về gray thường (COLOR_RGB2GRAY)
+    # như hành vi cũ, không làm hỏng luồng OCR.
+    # --------------------------------------------------------------
+    try:
+        r_ch, g_ch, b_ch = cv2.split(upscaled)
+        gray = cv2.min(g_ch, b_ch)
+    except Exception as exc:
+        if DEBUG_FILTER:
+            print(
+                f"[FOOTER] Loi khi khu muc do (fallback ve gray "
+                f"thuong): {exc}"
+            )
+        gray = cv2.cvtColor(upscaled, cv2.COLOR_RGB2GRAY)
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=3)
+    sharpened = cv2.addWeighted(enhanced, 1.5, blurred, -0.5, 0)
+
+    # Grayscale -> 3 kênh: cả 3 kênh giống hệt nhau nên RGB/BGR cho
+    # cùng 1 kết quả pixel ở bước convert này, không cần phân biệt.
+    footer_rgb = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2RGB)
+
+    # THÊM MỚI (CHỈ ĐỂ DEBUG): lưu thêm ảnh trung gian sau bước khử
+    # mực đỏ (trước CLAHE/sharpen) để so sánh trực quan với ảnh cropped
+    # cuối cùng đã có sẵn — giúp đánh giá bước khử đỏ có thực sự tách
+    # được chữ ra khỏi dấu hay không, hay dấu đè quá nặng không cứu
+    # được (trường hợp đó vẫn cần nhập tay, không phải lỗi code).
+    if DEBUG_FILTER:
+        try:
+            os.makedirs("debug_footer", exist_ok=True)
+            Image.fromarray(gray).save(
+                "debug_footer/_last_footer_red_suppressed_gray.jpg"
+            )
+        except Exception as exc:
+            print(f"[DEBUG-FOOTER] Loi khi luu anh khu do: {exc}")
+
+    return footer_rgb
+
 
 # ============================================================
 # WARM-UP PADDLEOCR
@@ -1394,6 +1926,186 @@ def _process_ocr_image(contents: bytes, filename: str) -> dict:
     )
 
     # ========================================================
+    # 7.5 THÊM MỚI: TĂNG CƯỜNG RIÊNG VÙNG "SỐ HIỆU / SỐ VÀO SỔ"
+    #
+    # Chỉ chạy cho ảnh nghi là văn bằng (theo tên file). OCR lại lần 2
+    # trên vùng góc dưới đã crop + phóng to + tăng nét (dùng lại đúng
+    # resize_and_pad() + ocr_engine.predict() + extract_lines() ở
+    # trên, không viết logic detect/recognize riêng), rồi CHÈN LÊN ĐẦU
+    # danh sách lines (sau khi đã sort theo vị trí ở bước 7) — vì
+    # DiplomaExtractor/BuddhistDiplomaExtractor bên PHP lấy NHÃN ĐẦU
+    # TIÊN tìm thấy trong text, nên bản đọc rõ hơn này sẽ được ưu tiên
+    # dùng thay vì bản mờ đọc được từ ảnh gốc.
+    #
+    # Đặt SAU bước sort (không sort chung box của 2 ảnh khác nhau) vì
+    # box của footer_lines thuộc hệ toạ độ ảnh crop riêng (không khớp
+    # không gian thật với ảnh gốc) — trộn chung vào bước sort theo vị
+    # trí phía trên sẽ cho thứ tự vô nghĩa. Việc chèn thẳng lên đầu
+    # (không cần đúng vị trí không gian) là đủ, vì PHP extractor chỉ
+    # cần thứ tự XUẤT HIỆN trong text, không cần đúng toạ độ trên ảnh.
+    #
+    # SỬA (THAY ĐỔI CHÍNH): chọn dải crop (y_start/y_end) bằng cách ƯU
+    # TIÊN neo theo toạ độ box THẬT của các dòng đã OCR được ở "lines"
+    # (find_footer_anchor_y()) — chỉ khi không tìm được anchor thật nào
+    # mới rơi xuống pick_footer_ratios() theo biến thể % cố định cũ.
+    # Xem giải thích đầy đủ ở docstring đầu file.
+    # ========================================================
+
+    is_diploma_like = bool(filename) and any(
+        kw in filename.lower() for kw in FOOTER_FILENAME_KEYWORDS
+    )
+
+    if FOOTER_ENABLE and is_diploma_like:
+
+        t_footer = time.time()
+
+        # THÊM MỚI (CHỈ ĐỂ DEBUG): in ra toạ độ y (tính theo % chiều
+        # cao recognition_image) của MỌI dòng đã OCR được, để tự đo
+        # chính xác dải y_start/y_end cần cho FOOTER_VARIANTS thay vì
+        # đoán qua ảnh chụp màn hình. Cột "y_top%" ứng với đỉnh box
+        # (box[0][1] - toạ độ y của điểm góc trên-trái). Tìm dòng nào
+        # gần với "Số hiệu"/"Serial No." nhất trong "KET QUA OCR" bên
+        # dưới, đối chiếu ngược lại đúng dòng đó ở đây để lấy y_top%.
+        if DEBUG_FILTER:
+            recog_h = recognition_image.shape[0]
+            print("[DEBUG-Y] Toa do y (%) cua tung dong (recognition_image):")
+            for line in lines:
+                if line.get("text") and line.get("box"):
+                    y_top_pct = line["box"][0][1] / recog_h
+                    print(
+                        f"[DEBUG-Y]   y_top%={y_top_pct:.3f} "
+                        f"| text={line['text']!r}"
+                    )
+
+        recog_h = recognition_image.shape[0]
+        anchor_ratios = find_footer_anchor_y(lines, recog_h)
+
+        if anchor_ratios is not None:
+            footer_y_start, footer_y_end = anchor_ratios
+            if DEBUG_FILTER:
+                print(
+                    f"[FOOTER] Dung ANCHOR THAT (toa do box that): "
+                    f"y_start={footer_y_start:.3f}, "
+                    f"y_end={footer_y_end:.3f}"
+                )
+        else:
+            existing_text = "\n".join(
+                line["text"] for line in lines if line.get("text")
+            )
+            footer_y_start, footer_y_end = pick_footer_ratios(existing_text)
+            if DEBUG_FILTER:
+                print(
+                    "[FOOTER] Khong tim thay anchor that, fallback bien the: "
+                    f"y_start={footer_y_start:.3f}, "
+                    f"y_end={footer_y_end:.3f}"
+                )
+
+        # THÊM MỚI (CHỈ ĐỂ DEBUG): lưu ra đĩa 2 ảnh để NHÌN TRỰC TIẾP
+        # vùng crop thay vì đoán qua toạ độ % suy luận từ text đọc sai.
+        #   *_footer_region.jpg : recognition_image gốc, có VẼ Ô ĐỎ
+        #                         đánh dấu đúng vùng sắp bị cắt ra.
+        #   *_footer_cropped.jpg: kết quả sau khi cắt + phóng to +
+        #                         CLAHE + sharpen (ảnh THẬT SỰ đưa vào
+        #                         OCR lần 2).
+        # Mở 2 file này trong thư mục debug_footer/ (nằm cạnh main.py)
+        # để biết chính xác vùng đang cắt có trúng dòng "Số hiệu/Số
+        # vào sổ" hay không, từ đó chỉnh lại đúng y_start/y_end trong
+        # FOOTER_VARIANTS mà không cần đoán mù nữa.
+        if DEBUG_FILTER:
+            try:
+                os.makedirs("debug_footer", exist_ok=True)
+                debug_name = os.path.splitext(filename or "unknown")[0]
+
+                y1 = max(0, int(recog_h * footer_y_start))
+                y2 = min(recog_h, int(recog_h * footer_y_end))
+
+                region_preview = recognition_image.copy()
+                cv2.rectangle(
+                    region_preview,
+                    (0, y1),
+                    (region_preview.shape[1] - 1, y2),
+                    (255, 0, 0),
+                    3,
+                )
+                Image.fromarray(region_preview).save(
+                    f"debug_footer/{debug_name}_footer_region.jpg"
+                )
+                print(
+                    f"[DEBUG-FOOTER] Da luu vung crop (o do) vao "
+                    f"debug_footer/{debug_name}_footer_region.jpg "
+                    f"| y_start={footer_y_start} (y={y1}px) "
+                    f"y_end={footer_y_end} (y={y2}px)"
+                )
+            except Exception as exc:
+                print(f"[DEBUG-FOOTER] Loi khi luu anh debug: {exc}")
+
+        try:
+            footer_image = crop_and_enhance_footer(
+                recognition_image,
+                y_start_ratio=footer_y_start,
+                y_end_ratio=footer_y_end,
+            )
+        except Exception as exc:
+            footer_image = None
+            print(f"[FOOTER] Loi khi crop/tang cuong (bo qua): {exc}")
+
+        if DEBUG_FILTER and footer_image is not None:
+            try:
+                os.makedirs("debug_footer", exist_ok=True)
+                debug_name = os.path.splitext(filename or "unknown")[0]
+                Image.fromarray(footer_image).save(
+                    f"debug_footer/{debug_name}_footer_cropped.jpg"
+                )
+            except Exception as exc:
+                print(f"[DEBUG-FOOTER] Loi khi luu anh cropped: {exc}")
+
+        if footer_image is not None:
+
+            try:
+                footer_detect_image, footer_det_scale, _, _ = resize_and_pad(
+                    footer_image
+                )
+
+                with ocr_lock:
+                    footer_results = list(
+                        ocr_engine.predict(footer_detect_image)
+                    )
+
+                footer_lines = []
+
+                for res in footer_results:
+                    footer_lines.extend(
+                        extract_lines(
+                            res=res,
+                            detect_image=footer_detect_image,
+                            recognition_image=footer_image,
+                            det_scale=footer_det_scale,
+                        )
+                    )
+
+                if footer_lines:
+                    print(
+                        f"[FOOTER] Doc them {len(footer_lines)} dong tu "
+                        f"vung da tang cuong: "
+                        f"{[l['text'] for l in footer_lines]}"
+                    )
+                    lines = footer_lines + lines
+                else:
+                    print(
+                        "[FOOTER] Khong doc duoc dong nao tu vung tang cuong"
+                    )
+
+            except Exception as exc:
+                print(
+                    f"[FOOTER] Loi khi OCR vung tang cuong (bo qua): {exc}"
+                )
+
+        print(
+            f"[TIME] Footer enhance + OCR: "
+            f"{time.time() - t_footer:.2f}s"
+        )
+
+    # ========================================================
     # 8. GHÉP RAW TEXT
     # ========================================================
 
@@ -1667,6 +2379,7 @@ def _process_ocr_pdf(
             # =================================================
 
             page_lines = []
+            page_line_dicts = []  # THÊM MỚI: giữ dict (có box) cho anchor
 
             if should_run_vietocr:
 
@@ -1689,12 +2402,128 @@ def _process_ocr_pdf(
 
                     )
 
+                    # THÊM MỚI: giữ nguyên dict (có box) để anchor thật
+                    # (find_footer_anchor_y()) có toạ độ để dùng bên
+                    # dưới — page_lines (list string) không đủ thông
+                    # tin toạ độ.
+                    page_line_dicts.extend(lines)
+
                     page_lines.extend(
                         item["text"]
 
                         for item in lines
 
                         if item.get("text")
+                    )
+
+                # =============================================
+                # 7.5 THÊM MỚI: TĂNG CƯỜNG VÙNG "SỐ HIỆU / SỐ
+                # VÀO SỔ" CHO TRANG LÀ VĂN BẰNG
+                #
+                # Cùng logic như trong _process_ocr_image() —
+                # tái dùng nguyên xi crop_and_enhance_footer() +
+                # resize_and_pad() + extract_lines(), CHỈ áp dụng
+                # cho trang đã được classify_page_quick() nhận
+                # diện là 1 trong 3 loại bằng (page_type bắt đầu
+                # bằng "bang_"), tránh tốn thời gian vô ích cho
+                # trang CCCD/phiếu đăng ký.
+                #
+                # SỬA (THAY ĐỔI CHÍNH): ưu tiên neo theo toạ độ box
+                # THẬT (find_footer_anchor_y()) dựa trên
+                # page_line_dicts vừa đọc được ở vòng VietOCR ngay
+                # trên; chỉ rơi xuống pick_footer_ratios() (biến thể
+                # % cố định) khi không tìm được anchor thật nào.
+                # =============================================
+
+                if FOOTER_ENABLE and page_type.startswith("bang_"):
+
+                    t_footer = time.time()
+
+                    recog_h = recognition_image.shape[0]
+                    anchor_ratios = find_footer_anchor_y(
+                        page_line_dicts, recog_h
+                    )
+
+                    if anchor_ratios is not None:
+                        footer_y_start, footer_y_end = anchor_ratios
+                        print(
+                            f"[FOOTER] Trang {page_number}: dung ANCHOR "
+                            f"THAT | y_start={footer_y_start:.3f}, "
+                            f"y_end={footer_y_end:.3f}"
+                        )
+                    else:
+                        existing_text = "\n".join(page_lines)
+                        footer_y_start, footer_y_end = pick_footer_ratios(
+                            existing_text
+                        )
+                        print(
+                            f"[FOOTER] Trang {page_number}: khong tim "
+                            f"thay anchor that, fallback bien the | "
+                            f"y_start={footer_y_start:.3f}, "
+                            f"y_end={footer_y_end:.3f}"
+                        )
+
+                    try:
+                        footer_image = crop_and_enhance_footer(
+                            recognition_image,
+                            y_start_ratio=footer_y_start,
+                            y_end_ratio=footer_y_end,
+                        )
+                    except Exception as exc:
+                        footer_image = None
+                        print(
+                            f"[FOOTER] Trang {page_number}: loi crop/tang "
+                            f"cuong (bo qua): {exc}"
+                        )
+
+                    if footer_image is not None:
+
+                        try:
+                            (
+                                footer_detect_image,
+                                footer_det_scale,
+                                _,
+                                _,
+                            ) = resize_and_pad(footer_image)
+
+                            with ocr_lock:
+                                footer_results = list(
+                                    ocr_engine.predict(footer_detect_image)
+                                )
+
+                            footer_texts = []
+
+                            for res in footer_results:
+                                footer_texts.extend(
+                                    item["text"]
+                                    for item in extract_lines(
+                                        res=res,
+                                        detect_image=footer_detect_image,
+                                        recognition_image=footer_image,
+                                        det_scale=footer_det_scale,
+                                    )
+                                    if item.get("text")
+                                )
+
+                            if footer_texts:
+                                print(
+                                    f"[FOOTER] Trang {page_number}: doc them "
+                                    f"{len(footer_texts)} dong: {footer_texts}"
+                                )
+                                # Chèn lên đầu — cùng lý do như trong
+                                # _process_ocr_image(): PHP extractor lấy
+                                # nhãn ĐẦU TIÊN tìm thấy trong text.
+                                page_lines = footer_texts + page_lines
+
+                        except Exception as exc:
+                            print(
+                                f"[FOOTER] Trang {page_number}: loi OCR vung "
+                                f"tang cuong (bo qua): {exc}"
+                            )
+
+                    print(
+                        f"[TIME] Trang {page_number} - Footer enhance + OCR: "
+                        f"{time.time() - t_footer:.2f}s"
                     )
 
             else:

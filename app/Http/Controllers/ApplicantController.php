@@ -160,8 +160,12 @@ class ApplicantController extends Controller
         // Bước 2: Trích xuất dữ liệu và lưu database
         try {
 
-            // Chọn Extractor phù hợp với loại tài liệu
-            $extractor = ExtractorFactory::make($request->document_type);
+            // Chọn Extractor phù hợp với loại tài liệu.
+            // THÊM MỚI: truyền thêm $rawText để ExtractorFactory tự nhận
+            // diện bằng Học viện Phật giáo (dùng chung document_type
+            // 'diploma_transcript' với bằng Bách Khoa, không có mục riêng
+            // trên dropdown) — xem chi tiết ở ExtractorFactory::make().
+            $extractor = ExtractorFactory::make($request->document_type, $rawText);
 
             // Trích xuất dữ liệu từ text OCR
             $parsedData = $extractor->extract($rawText);

@@ -158,6 +158,11 @@ class FileTextExtractorService
      * TRƯỚC để quyết định có đáng chạy VietOCR cho từng trang hay không
      * — 2 lớp lọc là ĐỘC LẬP và bổ trợ nhau: lớp Python giúp tiết kiệm
      * thời gian OCR, lớp PHP này đảm bảo phân loại cuối cùng chính xác.
+     *
+     * THÊM MỚI: hàm này còn được tái dùng ở extractPdf() để kiểm tra
+     * xem text NHÚNG SẴN trong PDF (không qua OCR, lấy trực tiếp từ
+     * Smalot\PdfParser) có thật sự là nội dung hợp lệ hay chỉ là RÁC
+     * (xem giải thích chi tiết ở extractPdf()).
      */
     protected function classifyPage(string $normalizedText): string
     {
@@ -207,11 +212,28 @@ class FileTextExtractorService
         }
 
         // ===== 4. Bằng Đại học =====
+        // THÊM MỚI: 3 cụm cuối ("hoc vien phat giao" / "phat hoc" /
+        // "buddhist") dành riêng cho bằng Học viện Phật giáo (Cử nhân Phật
+        // học) — phôi bằng có thể không ghi cụm "bằng cử nhân" liền mạch
+        // (ví dụ OCR tách "Bằng" và "Cử nhân Phật học" ra 2 dòng khác nhau,
+        // hoặc trình bày khác đi), nên không thể chỉ trông chờ vào 3 keyword
+        // chung phía trên. Cố tình dùng ĐÚNG 3 cụm đã dùng ở
+        // ExtractorFactory::isBuddhistDiploma() để 2 nơi luôn đồng bộ: nếu
+        // trang này được xếp vào bang_dai_hoc nhờ tín hiệu Phật giáo thì
+        // ExtractorFactory chắc chắn cũng sẽ chọn đúng BuddhistDiplomaExtractor
+        // cho text ghép ra từ nhóm này.
+        //
+        // AN TOÀN: không lo khớp nhầm bảng điểm/học bạ Phật giáo vào đây,
+        // vì các trang đó đã bị chặn ở bước 3 (LOẠI TRỪ TƯỜNG MINH) phía
+        // trên rồi — bước 3 luôn chạy TRƯỚC bước 4 này.
         if (
             str_contains($normalizedText, 'bang dai hoc') ||
             str_contains($normalizedText, 'bang cu nhan') ||
             str_contains($normalizedText, 'bang ky su') ||
-            str_contains($normalizedText, 'bang thac si')
+            str_contains($normalizedText, 'bang thac si') ||
+            str_contains($normalizedText, 'hoc vien phat giao') ||
+            str_contains($normalizedText, 'phat hoc') ||
+            str_contains($normalizedText, 'buddhist')
         ) {
             return 'bang_dai_hoc';
         }
@@ -236,6 +258,29 @@ class FileTextExtractorService
 
         // Không khớp bucket nào -> loại bỏ.
         return 'khac';
+    }
+
+    /**
+     * THÊM MỚI: map 1 document_type (do Laravel/user chọn khi upload)
+     * sang tập các "loại trang" (kết quả của classifyPage()) mà
+     * document_type đó CHẤP NHẬN.
+     *
+     * Dùng chung cho 2 chỗ:
+     *   1. extractPdf() - kiểm tra text nhúng sẵn trong PDF có thật sự
+     *      khớp document_type đang cần hay không, trước khi tin tưởng
+     *      trả thẳng (không qua OCR).
+     *   2. groupPagesByType()/lựa chọn nhóm trang sau khi OCR - đã có
+     *      logic tương đương nằm trực tiếp trong extractPdf(), tách ra
+     *      đây để 2 nơi dùng chung, tránh lệch logic.
+     */
+    protected function acceptedPageTypesForDocumentType(?string $documentType): array
+    {
+        return match ($documentType) {
+            'cccd_front', 'cccd_back' => ['cccd'],
+            'admission_form' => ['phieu_dang_ky'],
+            'diploma_transcript' => ['bang_dai_hoc', 'bang_cao_dang', 'bang_trung_cap'],
+            default => [], // document_type null/không rõ -> không có gì để so khớp
+        };
     }
 
     /**
@@ -286,13 +331,47 @@ class FileTextExtractorService
             );
         }
 
-        // PDF có text thật (không phải scan) -> chưa có cơ chế phân trang
-        // theo document_type cho trường hợp này, trả nguyên văn như cũ.
-        if (mb_strlen(preg_replace('/\s+/u', '', $text)) > 30) {
-            return $text;
+        // SỬA (THÊM MỚI): trước đây chỉ cần text nhúng sẵn trong PDF dài
+        // hơn 30 ký tự là TIN TƯỞNG NGAY và trả thẳng, không hề gọi OCR.
+        // Vấn đề thực tế gặp phải: một số PDF (thường do app scan/chụp
+        // ảnh trên điện thoại xuất ra) tự nhúng sẵn 1 lớp text "ẩn" bên
+        // dưới ảnh scan (kiểu OCR nội bộ chất lượng rất kém của chính
+        // app đó, hoặc rác từ font/encoding lỗi) — lớp text này DÀI hơn
+        // 30 ký tự nhưng hoàn toàn KHÔNG ĐỌC ĐƯỢC (vd:
+        // "t- 'iil :l i l:, :li Noc{ u )d ao trEt'..."), khiến ta trả
+        // rác thẳng về cho user mà KHÔNG BAO GIỜ gọi sang Python OCR
+        // service — mọi tối ưu OCR (xoay ảnh, model...) đều vô nghĩa vì
+        // không có cơ hội chạy tới.
+        //
+        // Giờ kiểm tra thêm 1 lớp: nếu độ dài đủ, thử classifyPage() y
+        // hệt logic đã dùng cho trang OCR. Nếu text nhúng khớp ĐÚNG loại
+        // giấy tờ đang cần (hoặc document_type không rõ, giữ hành vi cũ
+        // để an toàn) -> tin tưởng, trả thẳng như trước (nhanh, không
+        // tốn OCR). Nếu không khớp bucket nào phù hợp -> nghi là rác,
+        // RỚT XUỐNG chạy OCR như PDF scan bình thường thay vì trả rác.
+        $hasEnoughEmbeddedText = mb_strlen(preg_replace('/\s+/u', '', $text)) > 30;
+
+        if ($hasEnoughEmbeddedText) {
+            $acceptedTypes = $this->acceptedPageTypesForDocumentType($documentType);
+
+            if (empty($acceptedTypes)) {
+                // document_type null/không rõ -> giữ hành vi cũ (không đủ
+                // thông tin để kiểm tra khớp loại gì), tin tưởng text nhúng.
+                return $text;
+            }
+
+            $embeddedType = $this->classifyPage($this->normalizeText($text));
+
+            if (in_array($embeddedType, $acceptedTypes, true)) {
+                return $text;
+            }
+
+            // Text nhúng không khớp document_type đang cần -> rất có thể
+            // là rác (hoặc PDF nhiều trang mà Smalot gộp chung text nhiều
+            // trang thành 1 chuỗi khó nhận diện) -> rớt xuống chạy OCR.
         }
 
-        // PDF scan -> OCR.
+        // PDF scan (hoặc text nhúng bị nghi là rác) -> OCR.
         // FIX: bản trước THIẾU truyền $documentType xuống readPdfScanned(),
         // khiến Python OCR service không biết cần lọc/skip trang nào, luôn
         // chạy VietOCR cho MỌI trang (mất toàn bộ lợi ích tối ưu tốc độ đã
