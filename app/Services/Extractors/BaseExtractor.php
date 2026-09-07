@@ -251,6 +251,107 @@ abstract class BaseExtractor
         return null;
     }
 
+
+    /**
+     * So khớp regex trên bản text đã chuẩn hoá (không dấu, chữ thường),
+     * nhưng trả kết quả theo đúng text gốc bằng map offset.
+     *
+     * Pattern phải dùng nội dung phù hợp với normalize(), thường là chữ
+     * thường không dấu và có cờ /u.
+     *
+     * @return array<int|string, string|null>|null
+     */
+    protected function fuzzyMatch(string $text, string $pattern): ?array
+    {
+        [$normalizedText, $map] = $this->normalizeWithMap($text);
+
+        if (!preg_match($pattern, $normalizedText, $matches, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+
+        $result = [];
+
+        foreach ($matches as $key => $entry) {
+            [$value, $byteOffset] = $entry;
+
+            if ($byteOffset < 0) {
+                $result[$key] = null;
+                continue;
+            }
+
+            $charOffset = mb_strlen(
+                substr($normalizedText, 0, $byteOffset),
+                'UTF-8'
+            );
+
+            $charLength = mb_strlen($value, 'UTF-8');
+
+            $result[$key] = $this->mapNormalizedSpanToOriginal(
+                $text,
+                $map,
+                $charOffset,
+                $charLength
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Giống fuzzyMatch(), nhưng trả về tất cả vị trí khớp.
+     *
+     * Hữu ích khi OCR có nhiều dòng chứa cùng một từ khoá; Extractor con
+     * có thể lần lượt kiểm tra từng kết quả thay vì chỉ lấy match đầu tiên.
+     *
+     * @return array<int, array<int|string, string|null>>
+     */
+    protected function fuzzyMatchAll(string $text, string $pattern): array
+    {
+        [$normalizedText, $map] = $this->normalizeWithMap($text);
+
+        if (!preg_match_all(
+            $pattern,
+            $normalizedText,
+            $allMatches,
+            PREG_OFFSET_CAPTURE | PREG_SET_ORDER
+        )) {
+            return [];
+        }
+
+        $results = [];
+
+        foreach ($allMatches as $matches) {
+            $result = [];
+
+            foreach ($matches as $key => $entry) {
+                [$value, $byteOffset] = $entry;
+
+                if ($byteOffset < 0) {
+                    $result[$key] = null;
+                    continue;
+                }
+
+                $charOffset = mb_strlen(
+                    substr($normalizedText, 0, $byteOffset),
+                    'UTF-8'
+                );
+
+                $charLength = mb_strlen($value, 'UTF-8');
+
+                $result[$key] = $this->mapNormalizedSpanToOriginal(
+                    $text,
+                    $map,
+                    $charOffset,
+                    $charLength
+                );
+            }
+
+            $results[] = $result;
+        }
+
+        return $results;
+    }
+
     protected function splitAddress(string $address): array
     {
         $result = [];

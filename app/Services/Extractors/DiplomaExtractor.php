@@ -132,7 +132,7 @@ class DiplomaExtractor extends BaseExtractor
      */
     protected function fuzzyMatch(string $text, string $pattern): ?array
     {
-        $normalizedText = $this->normalize($text);
+        [$normalizedText, $map] = $this->normalizeWithMap($text);
 
         if (!preg_match($pattern, $normalizedText, $m, PREG_OFFSET_CAPTURE)) {
             return null;
@@ -143,8 +143,6 @@ class DiplomaExtractor extends BaseExtractor
         foreach ($m as $key => $entry) {
             [$value, $byteOffset] = $entry;
 
-            // Nhóm không tham gia khớp (optional group không match) sẽ có
-            // offset = -1, PCRE quy ước như vậy.
             if ($byteOffset < 0) {
                 $mapped[$key] = null;
                 continue;
@@ -153,12 +151,79 @@ class DiplomaExtractor extends BaseExtractor
             $charOffset = mb_strlen(substr($normalizedText, 0, $byteOffset), 'UTF-8');
             $charLen    = mb_strlen($value, 'UTF-8');
 
-            $mapped[$key] = $charLen > 0
-                ? mb_substr($text, $charOffset, $charLen, 'UTF-8')
-                : '';
+            $mapped[$key] = $this->mapNormalizedSpanToOriginal(
+                $text,
+                $map,
+                $charOffset,
+                $charLen
+            );
         }
 
         return $mapped;
+    }
+
+    /**
+     * FIX (BUG NGÀNH BỊ BỎ TRỐNG do fuzzyMatch() chỉ thử match "bang" ĐẦU
+     * TIÊN tìm thấy trong toàn văn bản):
+     *
+     * fuzzyMatch() dùng preg_match() thường — chỉ trả về match ĐẦU TIÊN.
+     * Với các block tìm-theo-"bang" (vd khối tìm ngành fallback bên dưới),
+     * nếu chữ "bang"/"bằng" xuất hiện nhiều lần trong văn bản với ý nghĩa
+     * KHÁC NHAU (vd "cấp bằng", "Số vào sổ ... cấp bằng tốt nghiệp" — cụm
+     * hành chính, KHÔNG phải dòng tiêu đề "BẰNG TỐT NGHIỆP..." thật), và
+     * lần xuất hiện ĐẦU TIÊN lại là cụm hành chính đó (case thực tế: dòng
+     * do khối tăng cường footer OCR chèn LÊN ĐẦU danh sách lines, kiểu "Số
+     * vào sổ gốc cấp bằng tốt nghiệp..." đứng trước cả dòng tiêu đề thật),
+     * thì fuzzyMatch() vớ nhầm ngay match đầu tiên, dòng kế tiếp không phải
+     * tên ngành, exclusion check phía sau loại bỏ candidate đó rồi CẢ NHÁNH
+     * bị bỏ qua luôn — không có cơ hội thử tiếp match thứ 2, thứ 3 (vd
+     * dòng tiêu đề "BẰNG TỐT NGHIỆP TRUNG CẤP" thật sự đứng sau).
+     *
+     * Hàm này duyệt TẤT CẢ vị trí khớp $pattern trên bản chuẩn hoá (dùng
+     * preg_match_all + PREG_OFFSET_CAPTURE), ánh xạ từng match về text gốc
+     * (logic y hệt fuzzyMatch()), và trả về mảng các kết quả theo đúng thứ
+     * tự xuất hiện — để nơi gọi có thể thử lần lượt match #1, #2, #3... cho
+     * tới khi tìm được ứng viên hợp lệ, thay vì bỏ cuộc ngay ở match #1.
+     *
+     * @return array<int, array<int|string, string>> mảng các "match nhóm"
+     *         (mỗi phần tử có cấu trúc giống 1 lần gọi fuzzyMatch()).
+     */
+    protected function fuzzyMatchAll(string $text, string $pattern): array
+    {
+        [$normalizedText, $map] = $this->normalizeWithMap($text);
+
+        if (!preg_match_all($pattern, $normalizedText, $allMatches, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) {
+            return [];
+        }
+
+        $results = [];
+
+        foreach ($allMatches as $m) {
+            $mapped = [];
+
+            foreach ($m as $key => $entry) {
+                [$value, $byteOffset] = $entry;
+
+                if ($byteOffset < 0) {
+                    $mapped[$key] = null;
+                    continue;
+                }
+
+                $charOffset = mb_strlen(substr($normalizedText, 0, $byteOffset), 'UTF-8');
+                $charLen    = mb_strlen($value, 'UTF-8');
+
+                $mapped[$key] = $this->mapNormalizedSpanToOriginal(
+                    $text,
+                    $map,
+                    $charOffset,
+                    $charLen
+                );
+            }
+
+            $results[] = $mapped;
+        }
+
+        return $results;
     }
 
     /**
@@ -171,6 +236,22 @@ class DiplomaExtractor extends BaseExtractor
     protected function afterLabelFuzzyAny(string $text, array $labels, int $maxLength = 80): ?string
     {
         return $this->afterLabelNormalized($text, $labels, $maxLength);
+    }
+
+    private function matchUniversityExact(string $raw): string
+    {
+        $clean = trim(preg_replace('/\s+/', ' ', $raw));
+        $normalizedRaw = $this->normalize($clean);
+
+        foreach (Universities::all() as $university) {
+
+            if ($this->normalize($university) === $normalizedRaw) {
+                return $university;
+            }
+
+        }
+
+        return $clean;
     }
 
     /**
@@ -533,39 +614,32 @@ class DiplomaExtractor extends BaseExtractor
                 }
             }
         }
-        // ===== Tên trường (HƯỚNG #1: chuẩn hoá trước khi so khớp) =====
-        // Trước đây chỉ khớp được các biến thể dấu đã liệt kê thủ công
-        // (vd: "Tr[ưu]ờng", "vi[eệ]n"...) — bỏ sót nhiều kiểu lỗi dấu khác.
-        // Giờ so khớp trên bản không dấu "dai hoc / cao dang / hoc vien /
-        // nhac vien / vien / trung cap", rồi lấy lại đoạn text GỐC tương ứng.
-        //
-        // FIX: bản trước THIẾU "trung cấp" — với bằng Trung cấp (vd:
-        // "TRƯỜNG TRUNG CẤP NGHỀ ...") thì university_name luôn bị bỏ trống
-        // vì tên trường không chứa "đại học/cao đẳng/học viện/nhạc viện".
-        // FIX (bug tên trường ra "ĐẠI HỌC QUỐC GIA THÀNH PHỐ HỒ CHÍ MINH"):
-        // pattern cũ cho "truong" là TÙY CHỌN nên preg_match luôn ăn ngay
-        // cụm "đại học/..." ĐẦU TIÊN gặp trong text — trên bằng của các
-        // trường thành viên ĐHQG, dòng "ĐẠI HỌC QUỐC GIA..." (tên hệ thống
-        // MẸ) luôn đứng TRƯỚC dòng "TRƯỜNG ĐẠI HỌC ..." (tên trường THẬT)
-        // nên bị vớ nhầm. Giờ ưu tiên thử bản BẮT BUỘC có "Trường" đứng
-        // trước; chỉ khi không tìm thấy mới rơi về pattern cũ (cho các mẫu
-        // không có chữ "Trường" đứng trước, ví dụ bằng Trung cấp), và loại
-        // trừ tường minh "đại học quốc gia" khỏi bản dự phòng này.
+        // ===== Tên trường =====
+
+        // Ưu tiên dòng có chữ "Trường"
         if ($fm = $this->fuzzyMatch(
             $text,
             '/truong\s+(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
         )) {
-            $result['university_name'] = $this->matchDictionary($fm[0], Universities::all());
+
+            $rawUniversity = trim($fm[0]);
+
+            // Chỉ dùng DictionaryMatcher nếu match CHÍNH XÁC.
+            $result['university_name'] = $this->matchUniversityExact($rawUniversity);
+
         } elseif (
             ($fm = $this->fuzzyMatch(
                 $text,
-                '/(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?|vien)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
+                '/(?:dai\s*hoc|cao\s*dang|hoc\s*vien|nhac\s*vien|trung\s*cap(?:\s*nghe)?)[^\n]{2,80}?(?=[ \t]{2,}|\n|$)/u'
             ))
             && !str_contains($this->normalize($fm[0]), 'quoc gia')
         ) {
-            $result['university_name'] = $this->matchDictionary($fm[0], Universities::all());
-        }
 
+            // Giữ nguyên kết quả OCR thay vì để fuzzy dictionary
+            // tự đổi Sư phạm thành Kinh tế.
+            $result['university_name'] = trim($fm[0]);
+        }
+        
         // ===== Hạng tốt nghiệp / Xếp loại (HƯỚNG #1) =====
         if ($fm = $this->fuzzyMatch(
             $text,
@@ -641,8 +715,12 @@ class DiplomaExtractor extends BaseExtractor
         // ===== Hình thức đào tạo (Chính quy / Vừa làm vừa học / Từ xa /
         // Liên thông / Chuyên tu) — CHỈ gán khi thực sự tìm thấy thông tin
         // này trong text, không suy luận/mặc định từ trình độ.
-        if ($training = $this->afterLabelFuzzyAny($text, ['Hình thức đào tạo', 'Hệ đào tạo'], 40)) {
-            $result['training_type'] = $training;
+        if ($training = $this->afterLabelFuzzyAny(
+            $text,
+            ['Loại hình đào tạo', 'Hình thức đào tạo', 'Hệ đào tạo'],
+            40
+        )) {
+            $result['training_type'] = trim($training);
         } elseif ($fm = $this->fuzzyMatch(
             $text,
             // Thêm "chuyên tu" — bạn có nhắc tới nhưng bản trước chưa có
@@ -650,6 +728,45 @@ class DiplomaExtractor extends BaseExtractor
             '/(chinh\s*quy|chuyen\s*tu|vua\s*lam\s*vua\s*hoc|tu\s*xa|lien\s*thong)/u'
         )) {
             $result['training_type'] = $fm[1];
+        }
+
+        // Fallback layout: OCR có thể đọc GIÁ TRỊ trước NHÃN
+        // (ví dụ: "CHÍNH QUY" rồi mới tới "loại hình đào tạo").
+        if (empty($result['training_type'])) {
+            $trainingLabels = ['loai hinh dao tao', 'hinh thuc dao tao', 'he dao tao'];
+
+            foreach ($lines as $i => $line) {
+                $normLine = $this->normalize($line);
+
+                $isLabel = false;
+                foreach ($trainingLabels as $label) {
+                    if (str_contains($normLine, $label)) {
+                        $isLabel = true;
+                        break;
+                    }
+                }
+
+                if (!$isLabel) {
+                    continue;
+                }
+
+                foreach ([$i - 1, $i + 1, $i - 2, $i + 2] as $nearbyIndex) {
+                    if (!isset($lines[$nearbyIndex])) {
+                        continue;
+                    }
+
+                    $candidate = trim($lines[$nearbyIndex]);
+                    $normCandidate = $this->normalize($candidate);
+
+                    if (preg_match(
+                        '/^(chinh\s*quy|chuyen\s*tu|vua\s*lam\s*vua\s*hoc|tu\s*xa|lien\s*thong)$/u',
+                        $normCandidate
+                    )) {
+                        $result['training_type'] = $candidate;
+                        break 2;
+                    }
+                }
+            }
         }
 
         // ===== Ngành / chuyên ngành đào tạo =====
@@ -668,35 +785,108 @@ class DiplomaExtractor extends BaseExtractor
             80
         )) {
             $major = $this->matchDictionary(trim($majorLabel), Majors::all());
-        } elseif ($fm = $this->fuzzyMatch(
-            // HƯỚNG #1: "bang" (BẰNG) không dấu, khoan dung lỗi OCR trên
-            // chính từ "BẰNG" đứng đầu dòng.
-            $text,
-            '/bang\s+[^\n]{0,60}\n\s*([^\n]{4,120})\n/u'
-        )) {
-            $lineRaw = $fm[1];
+        } else {
+            // Fallback layout: giá trị có thể đứng TRƯỚC/SAU nhãn do OCR
+            // sắp xếp box theo tọa độ. Chỉ lấy ứng viên gần nhãn và ưu tiên
+            // mục khớp được từ điển ngành để không ảnh hưởng các mẫu bằng khác.
+            $majorLabelIndex = null;
 
-            $segments = array_values(
-                array_filter(
-                    array_map(
-                        'trim',
-                        preg_split('/[ \t]{2,}/', $lineRaw)
+            foreach ($lines as $i => $line) {
+                $normLine = trim($this->normalize($line), " \t:.-");
+
+                if (
+                    $normLine === 'nganh'
+                    || $normLine === 'chuyen nganh'
+                    || $normLine === 'nganh dao tao'
+                ) {
+                    $majorLabelIndex = $i;
+                    break;
+                }
+            }
+
+            if ($majorLabelIndex !== null) {
+                foreach ([
+                    $majorLabelIndex - 1,
+                    $majorLabelIndex + 1,
+                    $majorLabelIndex - 2,
+                    $majorLabelIndex + 2
+                ] as $candidateIndex) {
+                    if (!isset($lines[$candidateIndex])) {
+                        continue;
+                    }
+
+                    $candidate = trim($lines[$candidateIndex]);
+                    $normCandidate = $this->normalize($candidate);
+
+                    if (
+                        $candidate === ''
+                        || preg_match('/\d/', $candidate)
+                        || str_contains($normCandidate, 'cong hoa')
+                        || str_contains($normCandidate, 'viet nam')
+                        || str_contains($normCandidate, 'tot nghiep')
+                        || str_contains($normCandidate, 'dao tao')
+                        || $normCandidate === 'nganh'
+                        || $normCandidate === 'chuyen nganh'
+                    ) {
+                        continue;
+                    }
+
+                    $matched = DictionaryMatcher::match($candidate, Majors::all());
+
+                    if (in_array($matched, Majors::all(), true)) {
+                        $major = $matched;
+                        break;
+                    }
+                }
+            }
+
+            // FIX (BUG NGÀNH BỊ BỎ TRỐNG): trước đây dùng fuzzyMatch() —
+            // chỉ thử match "bang" ĐẦU TIÊN trong toàn văn bản. Case thực
+            // tế: khối tăng cường footer OCR chèn dòng "Số vào sổ gốc cấp
+            // bằng tốt nghiệp..." LÊN ĐẦU danh sách lines (đứng trước cả
+            // dòng tiêu đề thật "BẰNG TỐT NGHIỆP TRUNG CẤP") -> fuzzyMatch()
+            // vớ nhầm ngay chữ "bằng" trong cụm hành chính đó, dòng kế tiếp
+            // ("SOCIALIST REPUBLIC OF VIETNAM"...) không phải tên ngành,
+            // bị exclusion check loại, và vì fuzzyMatch() chỉ có 1 kết quả
+            // nên cả nhánh bị bỏ qua luôn — không có cơ hội thử match thứ
+            // 2 (dòng tiêu đề thật, đứng sau).
+            //
+            // Dùng fuzzyMatchAll() để duyệt QUA TẤT CẢ vị trí "bang" xuất
+            // hiện trong văn bản theo đúng thứ tự, thử từng candidate cho
+            // tới khi tìm được ứng viên hợp lệ, thay vì bỏ cuộc ở match #1.
+            foreach ($this->fuzzyMatchAll(
+                $text,
+                '/bang\s+[^\n]{0,60}\n\s*([^\n]{4,120})\n/u'
+            ) as $fm) {
+                $lineRaw = $fm[1];
+
+                $segments = array_values(
+                    array_filter(
+                        array_map(
+                            'trim',
+                            preg_split('/[ \t]{2,}/', $lineRaw)
+                        )
                     )
-                )
-            );
+                );
 
-            $candidate = $segments
-                ? trim(preg_replace('/\s+/', ' ', end($segments)))
-                : '';
+                $candidate = $segments
+                    ? trim(preg_replace('/\s+/', ' ', end($segments)))
+                    : '';
 
-            // So khớp loại trừ trên bản KHÔNG DẤU để không bỏ sót các dòng
-            // rác kiểu "CỘNG HÒA" bị OCR đọc thiếu dấu.
-            $normCandidate = $this->normalize($candidate);
+                // So khớp loại trừ trên bản KHÔNG DẤU để không bỏ sót các
+                // dòng rác kiểu "CỘNG HÒA" bị OCR đọc thiếu dấu.
+                $normCandidate = $this->normalize($candidate);
 
-            if (
-                $candidate !== ''
-                && !preg_match('/cong\s*hoa|\bcho\b|cap|truong|viet\s*nam/u', $normCandidate)
-            ) {
+                if (
+                    $candidate === ''
+                    || preg_match('/cong\s*hoa|\bcho\b|cap|truong|viet\s*nam/u', $normCandidate)
+                ) {
+                    // Ứng viên này là rác (cụm hành chính/tiêu đề/quốc
+                    // hiệu...) — thử tiếp match "bang" kế tiếp trong văn
+                    // bản thay vì bỏ cuộc hoàn toàn.
+                    continue;
+                }
+
                 // FIX (bug ngành ra tiếng Anh "Electrical - Electronics
                 // Engineering" thay vì tên tiếng Việt): bằng song ngữ luôn có 1
                 // dòng tiếng Anh + 1 dòng tiếng Việt liền kề cho tên ngành, nhưng
@@ -780,6 +970,10 @@ class DiplomaExtractor extends BaseExtractor
                 }
 
                 $major = $this->matchDictionary($candidate, Majors::all());
+
+                // Đã tìm được ứng viên hợp lệ từ match này — dừng vòng lặp
+                // fuzzyMatchAll(), không cần thử các match "bang" còn lại.
+                break;
             }
         }
 
@@ -820,7 +1014,47 @@ class DiplomaExtractor extends BaseExtractor
                 }
             }
         }
+        // ===== Ngành — fallback riêng phôi Bách Khoa (nhãn "CẤP", không có "Ngành:") =====
+        if (empty($major)) {
+            $capIndex = null;
 
+            foreach ($lines as $i => $line) {
+                if (trim($this->normalize($line), " \t:.-") === 'cap') {
+                    $capIndex = $i;
+                    break;
+                }
+            }
+
+            if ($capIndex !== null) {
+                $majorParts = [];
+
+                for ($i = $capIndex + 1; $i < count($lines) && $i <= $capIndex + 6; $i++) {
+                    $candidate = trim($lines[$i]);
+                    $normCandidate = $this->normalize($candidate);
+
+                    // Hết phần ngành khi chạm dòng "Cho:"/"Upon:" (bắt đầu tên người)
+                    if (str_contains($normCandidate, 'cho ') || str_contains($normCandidate, 'upon')) {
+                        break;
+                    }
+
+                    // Bỏ dòng tiếng Anh (không dấu tiếng Việt)
+                    if ($candidate === $this->stripDiacritics($candidate)) {
+                        continue;
+                    }
+
+                    if (preg_match('/\d/', $candidate) || mb_strlen($candidate, 'UTF-8') < 3) {
+                        continue;
+                    }
+
+                    $majorParts[] = $candidate;
+                }
+
+                if ($majorParts) {
+                    $rawMajor = trim(preg_replace('/\s+/', ' ', implode(' - ', $majorParts)));
+                    $major = $this->matchDictionary($rawMajor, Majors::all());
+                }
+            }
+        }
         // ===== Mã ngành =====
         if (preg_match('/M[aã]\s*ng[aà]nh[:\s]+(\d{4,8})/iu', $text, $m)) {
             $result['major_code'] = $m[1];
@@ -1117,17 +1351,29 @@ class DiplomaExtractor extends BaseExtractor
 
                 $sameLineCandidate = null;
 
+                // FIX (BUG "Số vào sổ" bị lấy nhầm là "Số hiệu"):
+                // trước đây $labelPatterns liệt kê pattern NGẮN
+                // ('hieu', 'so hieu'...) đứng gần đầu danh sách — vì đây
+                // là khối tìm "Số hiệu" nên nhìn qua có vẻ vô hại, nhưng
+                // do đây cũng là bảng dùng chung logic mb_stripos() tìm
+                // vị trí xuất hiện ĐẦU TIÊN của TỪNG pattern rồi cắt lấy
+                // phần sau, nếu 2 pattern cùng khớp trên 1 dòng thì thứ
+                // tự khai báo quyết định phần "afterLabel" cắt ra khác
+                // nhau. Sắp xếp lại đây theo NGUYÊN TẮC CHUNG (áp dụng
+                // đồng bộ với khối "Số vào sổ" bên dưới): pattern DÀI/CỤ
+                // THỂ HƠN phải đứng TRƯỚC pattern NGẮN/CHUNG CHUNG hơn,
+                // để tránh cắt lố/cắt hụt khi 1 dòng chứa nhiều cụm con
+                // lồng nhau (vd "so hieu van bang" chứa cả "so hieu" và
+                // "hieu").
                 $labelPatterns = [
                     'so hieu van bang',
                     'so hieu bang',
-                    'so hieu',
-                    'hieu bang',
-                    'hieu',
-                    // FIX: cùng lỗi OCR "hiệu" -> "hiệw" (u->w) — thêm biến
-                    // thể để cắt đúng vị trí lấy giá trị trên cùng dòng.
-                    'so hiew',
                     'hiew bang',
+                    'hieu bang',
+                    'so hiew',
+                    'so hieu',
                     'hiew',
+                    'hieu',
                 ];
 
                 foreach ($labelPatterns as $label) {
@@ -1305,8 +1551,14 @@ class DiplomaExtractor extends BaseExtractor
                 }
 
                 // Tuyệt đối bỏ "hiệu bản sao"
-                if (str_contains($normLine, 'ban sao')) {
-                    continue;
+                if (
+                    str_contains($normLine, 'ban sao')
+                    || str_contains($normLine, 'hieu truong')
+                    || str_contains($normLine, 'vao so')
+                    || str_contains($normLine, 'dang ky')   // thêm dòng này
+                    || str_contains($normLine, 'cap bang')
+                ) {
+                    return false;
                 }
 
 
@@ -1437,14 +1689,46 @@ class DiplomaExtractor extends BaseExtractor
 
                 $sameLineCandidate = null;
 
+                // FIX CHÍNH (BUG "Số vào sổ" đọc ra "SốHIệU:0000008"):
+                //
+                // Danh sách CŨ:
+                //
+                //     'so vao so cap bang',
+                //     'vao so cap bang',
+                //     'vao so cap',
+                //     'so vao so',              <- pattern NGẮN đứng
+                //                                  GIỮA danh sách
+                //     'vao so goc cap bang',
+                //     'so vao goc cap bang',
+                //     'vao so goc',
+                //
+                // Với dòng thật "Số vào sổ gốc cấp bằng tốt nghiệp...",
+                // bản chuẩn hoá là "so vao so goc cap bang tot nghiep...".
+                // mb_stripos() được gọi TUẦN TỰ theo đúng thứ tự mảng và
+                // DỪNG NGAY khi tìm thấy match đầu tiên (break trong thân
+                // vòng lặp bên dưới) — 'so vao so' (dài 9 ký tự, đứng thứ
+                // 4) khớp TRƯỚC khi kịp thử 'vao so goc cap bang' (dài hơn,
+                // đúng nghĩa hơn, đứng thứ 5). Hệ quả: $afterLabel bị cắt
+                // sai vị trí (cắt ngay sau "sổ", để sót lại "gốc cấp bằng
+                // tốt nghiệp:..." phía trước giá trị thật) -> candidate bị
+                // isValidDiplomaCandidate() loại vì chứa "cap bang" -> rơi
+                // xuống dò dòng lân cận và vớ nhầm dòng "Số hiệu:0000008"
+                // đứng ngay phía trên.
+                //
+                // FIX: sắp lại danh sách theo NGUYÊN TẮC "pattern DÀI/CỤ
+                // THỂ hơn phải đứng TRƯỚC pattern NGẮN/CHUNG CHUNG hơn" —
+                // để mb_stripos() luôn ưu tiên khớp đúng cụm nhãn đầy đủ
+                // nhất trước, tránh bị 1 pattern con ngắn hơn "chen ngang"
+                // cắt hụt phần nhãn thật.
                 $labelPatterns = [
+                    'so vao so goc cap bang',
+                    'so vao goc cap bang',
+                    'vao so goc cap bang',
                     'so vao so cap bang',
                     'vao so cap bang',
+                    'vao so goc',
                     'vao so cap',
                     'so vao so',
-                    'vao so goc cap bang',
-                    'so vao goc cap bang',
-                    'vao so goc',
                 ];
 
 
@@ -1501,6 +1785,18 @@ class DiplomaExtractor extends BaseExtractor
                     );
                     $afterLabel = ltrim($afterLabel, " \t:.-–/");
 
+                    // FIX MỚI: nhãn đầy đủ "Số vào sổ gốc cấp bằng tốt nghiệp:" — cụm
+                    // "tốt nghiệp" đứng SAU "cấp bằng" nhưng VẪN THUỘC PHẦN NHÃN, chưa
+                    // tới giá trị. $labelPatterns hiện tại dừng ở "cap bang" nên còn sót
+                    // lại " tốt nghiệp:" dính vào đầu giá trị (case thực tế: giá trị ra
+                    // "TốTNGHIệP:008/TC.2015"). Bóc tiếp cụm này (và dấu ":"/"." sau nó)
+                    // nếu còn đứng ở đầu.
+                    $afterLabel = preg_replace(
+                        '/^t[ốo]t\s*nghi[eệ]p[.:\-–]*\s*/iu',
+                        '',
+                        $afterLabel
+                    );
+                    $afterLabel = ltrim($afterLabel, " \t:.-–/");
 
                     if (
                         $afterLabel !== ''
@@ -1884,7 +2180,7 @@ class DiplomaExtractor extends BaseExtractor
         // chèn thêm ký tự rác gì ở giữa.
         if (empty($result['diploma_registry_number'])) {
             if (preg_match(
-                '/S[ốo]\s*đăng\s*k[ýy][^\n]{0,10}?(\d{1,4}\s*\/\s*[A-Za-z0-9]+)/iu',
+                '/S[ốo]\s*d?ăng\s*k[ýy][^\n]{0,10}?(\d{1,4}\s*\/\s*[A-Za-z0-9]+)/iu',
                 $text,
                 $m
             )) {
@@ -1951,7 +2247,7 @@ class DiplomaExtractor extends BaseExtractor
 
         // ===== Tỉnh trường đại học =====
         if (preg_match(
-            '/([A-ZÀ-Ỹ][^\n]{1,40}?)[ \t]*,?[ \t]*ng[àa]y[\s\.]*\d{1,2}[\s\.]*th[áa]ng[\s\.]*\d{1,2}[\s\.]*n[ăa]m[\s\.]*\d{4}/iu',
+            '/([A-ZÀ-Ỹ][^\n]{1,40}?)[ \t]*,?[ \t]*ng[àa]y[\s\.]*\d{1,2}[\s\.]*th[áa]ng[\s\.]*\d{1,2}[\s\.]*n[ăa]m[\s\.]*(\d{2,4})/iu',
             $text,
             $m
         )) {

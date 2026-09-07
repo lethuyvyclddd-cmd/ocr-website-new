@@ -10,55 +10,196 @@ class DictionaryMatcher
             return null;
         }
 
-        $text = self::normalize($text);
+        $originalText = trim($text);
+        $normalizedText = self::normalize($originalText);
 
-        $best = null;
+        if ($normalizedText === '') {
+            return $originalText;
+        }
 
-        $bestScore = PHP_INT_MAX;
+        /*
+         * ============================================================
+         * BƯỚC 1: EXACT MATCH
+         * ============================================================
+         *
+         * OCR đọc đúng hoàn toàn -> trả về giá trị trong dictionary.
+         */
 
         foreach ($dictionary as $item) {
 
-            $score = levenshtein(
+            if (self::normalize($item) === $normalizedText) {
+                return $item;
+            }
+        }
 
-                self::normalize($item),
 
-                $text
+        /*
+         * ============================================================
+         * BƯỚC 2: CONTAINS MATCH
+         * ============================================================
+         *
+         * Trường hợp OCR có thêm chữ như:
+         *
+         * "Ngành Hóa học"
+         * "Chuyên ngành Công nghệ thông tin"
+         *
+         * nhưng vẫn chứa nguyên tên trong dictionary.
+         *
+         * Chỉ ưu tiên item dài nhất để tránh:
+         *
+         * "Luật" match trước "Luật kinh tế"
+         */
 
+        $containsMatches = [];
+
+        foreach ($dictionary as $item) {
+
+            $normalizedItem = self::normalize($item);
+
+            if (
+                $normalizedItem !== ''
+                && str_contains($normalizedText, $normalizedItem)
+            ) {
+                $containsMatches[] = $item;
+            }
+        }
+
+        if (!empty($containsMatches)) {
+
+            usort(
+                $containsMatches,
+                function ($a, $b) {
+
+                    return mb_strlen(
+                        self::normalize($b),
+                        'UTF-8'
+                    )
+                    <=>
+                    mb_strlen(
+                        self::normalize($a),
+                        'UTF-8'
+                    );
+                }
             );
 
-            if ($score < $bestScore) {
+            return $containsMatches[0];
+        }
 
-                $bestScore = $score;
 
-                $best = $item;
+        /*
+         * ============================================================
+         * BƯỚC 3: FUZZY MATCH
+         * ============================================================
+         *
+         * Chỉ dùng Levenshtein khi không có exact match
+         * và không có contains match.
+         */
 
+        $best = null;
+        $bestScore = PHP_INT_MAX;
+        $bestSimilarity = 0;
+
+        foreach ($dictionary as $item) {
+
+            $normalizedItem = self::normalize($item);
+
+            if ($normalizedItem === '') {
+                continue;
             }
 
+            $itemLen = mb_strlen(
+                $normalizedItem,
+                'UTF-8'
+            );
+
+            $textLen = mb_strlen(
+                $normalizedText,
+                'UTF-8'
+            );
+
+            $maxLen = max(
+                $itemLen,
+                $textLen
+            );
+
+            if ($maxLen === 0) {
+                continue;
+            }
+
+            $score = levenshtein(
+                $normalizedItem,
+                $normalizedText
+            );
+
+            $similarity = 1 - (
+                $score / $maxLen
+            );
+
+            if ($similarity > $bestSimilarity) {
+
+                $bestSimilarity = $similarity;
+                $bestScore = $score;
+                $best = $item;
+            }
         }
 
-        // FIX: ngưỡng tuyệt đối "<=5" trước đây khiến chuỗi NGẮN (vd "ky su"
-        // đọc nhầm từ "Kỹ sư") gần như luôn "khớp" bừa với mục ngắn nào đó
-        // trong từ điển (vd "Luật") dù không liên quan gì, vì với chuỗi
-        // ngắn thì khoảng cách Levenshtein tối đa vốn dĩ đã nhỏ hơn 5.
-        // Đổi sang ngưỡng TƯƠNG ĐỐI theo độ dài chuỗi dài hơn giữa 2 bên,
-        // đồng thời chỉ áp dụng match khi chuỗi cần so đủ dài (>= 6 ký tự)
-        // để tránh việc ép match các mảnh text ngắn/vô nghĩa.
-        $bestLen = $best !== null ? mb_strlen(self::normalize($best), 'UTF-8') : 0;
-        $textLen = mb_strlen($text, 'UTF-8');
-        $maxLen = max($bestLen, $textLen);
 
-        if (
-            $textLen >= 6
-            && $maxLen > 0
-            && ($bestScore / $maxLen) <= 0.3
-        ) {
+        /*
+         * ============================================================
+         * BƯỚC 4: KIỂM TRA NGƯỠNG
+         * ============================================================
+         *
+         * Chuỗi ngắn cần ngưỡng cao hơn vì chỉ sai vài ký tự
+         * là có thể match nhầm.
+         *
+         * Ví dụ:
+         *
+         * "Luat"   -> "Luật"
+         * "Hoa hoc" -> "Hóa học"
+         *
+         * Chuỗi dài cho phép OCR sai nhiều hơn một chút.
+         */
 
-            return $best;
-
+        if ($best === null) {
+            return $originalText;
         }
 
-        return $text;
+        $textLen = mb_strlen(
+            $normalizedText,
+            'UTF-8'
+        );
+
+
+        // Chuỗi rất ngắn
+        if ($textLen <= 5) {
+
+            return $bestSimilarity >= 0.85
+                ? $best
+                : $originalText;
+        }
+
+
+        // Chuỗi trung bình
+        if ($textLen <= 10) {
+
+            return $bestSimilarity >= 0.80
+                ? $best
+                : $originalText;
+        }
+
+
+        // Chuỗi dài
+        return $bestSimilarity >= 0.70
+            ? $best
+            : $originalText;
     }
+
+
+    /*
+     * ============================================================
+     * NORMALIZE
+     * ============================================================
+     */
 
     private static function normalize(?string $text): string
     {
@@ -66,21 +207,46 @@ class DictionaryMatcher
             return '';
         }
 
-        // Chuẩn UTF8 trước
-        $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
+        $text = mb_strtolower(
+            trim($text),
+            'UTF-8'
+        );
 
-        $text = mb_strtolower($text, 'UTF-8');
+        /*
+         * Chuyển tiếng Việt có dấu -> không dấu.
+         */
 
-        // iconv có thể lỗi nếu OCR sinh ký tự rác
-        $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text);
+        $converted = @iconv(
+            'UTF-8',
+            'ASCII//TRANSLIT//IGNORE',
+            $text
+        );
 
         if ($converted !== false) {
             $text = $converted;
         }
 
-        $text = preg_replace('/[^a-z0-9 ]/i', ' ', $text);
 
-        $text = preg_replace('/\s+/', ' ', $text);
+        /*
+         * Chỉ giữ chữ cái, số và khoảng trắng.
+         */
+
+        $text = preg_replace(
+            '/[^a-z0-9]+/i',
+            ' ',
+            $text
+        );
+
+
+        /*
+         * Gộp khoảng trắng.
+         */
+
+        $text = preg_replace(
+            '/\s+/',
+            ' ',
+            $text
+        );
 
         return trim($text);
     }

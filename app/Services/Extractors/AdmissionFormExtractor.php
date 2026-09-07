@@ -97,14 +97,21 @@ class AdmissionFormExtractor extends BaseExtractor
         }
 
         // 1. Họ và tên thí sinh
-        if (preg_match(
-            '/Họ và tên thí sinh[:\s]+(.+?)(?=\s*(?:Nam,?\s*nữ|Giới\s*tính)\s*[:\-]|\n|$)/iu',
+        //
+        // FIX (bug "Họ"/"Tên" luôn trống): pattern CŨ dùng preg_match()
+        // thường, đòi hỏi khớp CHÍNH XÁC cụm "thí sinh" có dấu. OCR thực
+        // tế có thể đọc sai dấu thành "thì sinh" (ì thay vì í), khiến
+        // regex không bao giờ khớp dù dòng vẫn đọc được rõ ràng.
+        //
+        // FIX: chuyển sang fuzzyMatch() (so khớp trên bản không dấu) như
+        // các field khác đã được vá trong file này.
+        if ($fm = $this->fuzzyMatch(
             $text,
-            $m
+            '/ho\s*va\s*ten\s*thi\s*sinh\s*[:,]?\s*(.+?)(?=\s*(?:nam,?\s*nu|gioi\s*tinh)\s*[:\-]|\n|$)/u'
         )) {
             $result = array_merge(
                 $result,
-                $this->splitFullName(trim($m[1]))
+                $this->splitFullName(trim(rtrim(trim($fm[1]), '.')))
             );
         }
 
@@ -309,8 +316,18 @@ class AdmissionFormExtractor extends BaseExtractor
         }
 
         // 7. Năm tốt nghiệp THPT
-        if (preg_match('/tốt nghiệp THPT[^\n]*?[:\s](\d{4})/iu', $text, $m)) {
-            $result['highschool_graduation_year'] = $m[1];
+        //
+        // FIX (bug "Năm Tốt Nghiệp" luôn trống): pattern CŨ dùng
+        // preg_match() thường, đòi hỏi khớp CHÍNH XÁC "tốt nghiệp" có
+        // dấu. OCR thực tế có thể đọc sai dấu thành "sốt nghiệp" (s thay
+        // vì t), khiến regex không bao giờ khớp dù năm vẫn đọc được rõ.
+        //
+        // FIX: chuyển sang fuzzyMatch().
+        if ($fm = $this->fuzzyMatch(
+            $text,
+            '/tot\s*nghiep\s*thpt[^\n]*?[:\s](\d{4})/u'
+        )) {
+            $result['highschool_graduation_year'] = $fm[1];
         }
 
         // 8. Học lực / Hạnh kiểm lớp 12
@@ -324,9 +341,15 @@ class AdmissionFormExtractor extends BaseExtractor
 
         // Học lực THPT: neo theo cụm "năm lớp 12" đứng trước nó để phân biệt với
         // "Học lực" của bằng đại học (dòng "Trường cấp bằng ... Học lực" ở dưới).
+        // FIX (bug "Học Lực THPT" dính rác "Khá....... Hạnh kiếm: Tốt"):
+        // capture CŨ ([^\n]+) tham lam, ăn hết tới cuối dòng, kể cả nhãn
+        // "Hạnh kiểm" đứng ngay sau trên cùng dòng. Đổi capture thành
+        // không tham lam và dừng lại TRƯỚC cụm "Hạnh kiểm" (nếu có mặt
+        // trên cùng dòng) hoặc chuỗi dấu chấm lặp ("......."), hoặc tới
+        // hết dòng nếu không có.
         if ($fm = $this->fuzzyMatch(
             $text,
-            '/nam\s*lop\s*12[^\n]*?hoc\s*luc[:\s]+([^\n]+)/u'
+            '/nam\s*lop\s*12[^\n]*?hoc\s*luc[:\s]+([^\n]+?)(?=\s*\.{2,}|\s*hanh\s*kiem|\s*$)/u'
         )) {
             $result['highschool_academic_rank'] = trim(rtrim(trim($fm[1]), '.'));
         }
